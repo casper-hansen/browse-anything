@@ -1,0 +1,21 @@
+[project]
+name = "browse-anything"
+version = "0.1.0"
+description = "Visit any web page with wreq, getting past Anubis and Cloudflare in a sandboxed real Chrome."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "wreq==0.13.0",
+    "mcp>=2.3.0",
+    "markdownify>=1.2.3",
+]
+
+[project.scripts]
+browse-anything = "browse_anything.__main__:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
