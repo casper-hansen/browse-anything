@@ -3,7 +3,7 @@
 Visit any web page from DSH (or any MCP client). Requests go through [wreq](https://github.com/0x676e67/wreq-python) with a Chrome TLS/HTTP2 fingerprint. Bot walls are handled on the way:
 
 - **Anubis**: the proof of work (`fast`/`slow`) is solved in Python, and `metarefresh` challenges are followed.
-- **Cloudflare**: a real Chrome passes the challenge and clicks Turnstile if one appears. Its `cf_clearance` cookie and user agent then go to wreq, so later requests to that site skip the browser.
+- **Cloudflare**: a real Chrome passes the challenge and clicks the Turnstile checkbox as soon as it is shown. Chrome stops when Cloudflare issues the `cf_clearance` cookie, without waiting for the origin to serve the page, and the cookie and its user agent go to wreq. wreq then fetches the page, so a slow origin serves it only once, and later requests to that site skip the browser.
 
 Chrome always runs in the same sandbox as [DSH's local sandbox](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/sandbox/sandbox-local/src/index.ts) in `workspace-write` mode: Seatbelt (`sandbox-exec`) on macOS, `bwrap` on Linux. It can only write to its throwaway profile and the temp dirs. If no sandbox is available, it refuses to start. It runs in Chrome's new headless mode, the full browser without a window, so nothing ever appears on screen. Its user agent is set to the one a regular Chrome window of the installed version sends, because Cloudflare blocks the default `HeadlessChrome` one.
 
