@@ -37,21 +37,14 @@ class Browser:
             await asyncio.sleep(delay)
             page, headers = await self.fetch(redeem)
         if cloudflare.detect(headers, page.html):
-            # Chrome stops once it holds the clearance, so the origin, which can be slow, only serves the page once.
-            if html := await self.clear(page.url, "clearance"):  # Chrome was let in without a new clearance.
-                return Page(page.url, 200, html)
-            retry, headers = await self.fetch(page.url)
-            if cloudflare.detect(headers, retry.html):  # The clearance did not carry over to wreq; let Chrome load it.
-                retry = Page(page.url, 200, await self.clear(page.url, "page"))
-            page = retry
+            # Chrome passes the challenge and renders the page, JavaScript included. Its clearance cookie goes to wreq,
+            # so later requests to the site skip Chrome.
+            rendered = await self.chrome.solve(page.url)
+            self.user_agents[urlsplit(rendered.url).hostname] = rendered.user_agent
+            for cookie in rendered.cookies:
+                self.jar.add(f"{cookie['name']}={cookie['value']}; Domain={cookie['domain']}; Path={cookie['path']}", rendered.url)
+            page = Page(rendered.url, rendered.status, rendered.html)
         return page
-
-    async def clear(self, url: str, until: str) -> str | None:
-        html, cookies, user_agent = await self.chrome.solve(url, until)
-        self.user_agents[urlsplit(url).hostname] = user_agent
-        for cookie in cookies:
-            self.jar.add(f"{cookie['name']}={cookie['value']}; Domain={cookie['domain']}; Path={cookie['path']}", url)
-        return html
 
     async def fetch(self, url: str) -> tuple[Page, wreq.HeaderMap]:
         user_agent = self.user_agents.get(urlsplit(url).hostname)

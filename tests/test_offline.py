@@ -57,11 +57,6 @@ def test_sandbox_confines_writes(tmp_path):
     assert not outside.exists()
 
 
-def test_cloudflare_clearance():
-    assert cloudflare.clearance([{"name": "a", "value": "1"}, {"name": "cf_clearance", "value": "2"}]) == "2"
-    assert cloudflare.clearance([{"name": "a", "value": "1"}]) is None
-
-
 def test_walk_descends_into_shadow_roots_and_frames():
     checkbox = {"nodeName": "INPUT", "attributes": ["type", "checkbox"]}
     iframe = {"nodeName": "IFRAME", "contentDocument": {"nodeName": "#document", "children": [{"nodeName": "DIV", "shadowRoots": [checkbox]}]}}

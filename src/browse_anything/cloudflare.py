@@ -1,4 +1,4 @@
-"""Pass Cloudflare challenges in a real, sandboxed Chrome driven over the DevTools pipe.
+"""Pass Cloudflare challenges in a real, sandboxed Chrome driven over the DevTools pipe, and render the page.
 
 Chrome runs in new headless mode, which is the full browser without a window. Its user agent is set to the
 regular Chrome one, because Cloudflare blocks the `HeadlessChrome` default.
@@ -19,7 +19,7 @@ import subprocess
 import sys
 import tempfile
 from collections import defaultdict
-from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from .sandbox import confine
@@ -49,6 +49,19 @@ PLATFORMS = {"darwin": "Macintosh; Intel Mac OS X 10_15_7", "linux": "X11; Linux
 
 POLL = 0.25  # Seconds between checks of the challenge's progress.
 RECLICK = 4  # Seconds to let a click verify before clicking a checkbox that is still shown.
+SCROLL_STEP, SCROLL_PAUSE, SCROLL_MAX = 600, 0.15, 20_000  # Pixels and seconds; scrolling loads lazy content.
+IDLE = 1  # Seconds without network requests after which the page counts as rendered.
+SETTLE = 10  # Most seconds spent scrolling and waiting for the network once the page has loaded.
+
+# The page's HTML including open shadow roots, as declarative `<template shadowrootmode>`, since `outerHTML` drops
+# them and web-component sites keep their content there.
+SERIALIZE = """(() => {
+    const roots = [];
+    const collect = root => root.querySelectorAll('*').forEach(e => { if (e.shadowRoot) { roots.push(e.shadowRoot); collect(e.shadowRoot); } });
+    collect(document);
+    const html = document.documentElement;
+    return '<!DOCTYPE html>' + (html.getHTML ? html.getHTML({shadowRoots: roots}) : html.outerHTML);
+})()"""
 
 
 def detect(headers, body: str) -> bool:
@@ -80,6 +93,24 @@ def walk(node: dict):
         nodes += node.get("children", []) + node.get("shadowRoots", []) + ([node["contentDocument"]] if "contentDocument" in node else [])
 
 
+@dataclass
+class Rendered:
+    url: str
+    status: int
+    html: str
+    cookies: list[dict]
+    user_agent: str
+
+
+@dataclass
+class Load:
+    """The network activity of a tab: requests in flight and the status of its latest document."""
+
+    frame: str
+    status: int = 200
+    requests: set[str] = field(default_factory=set)
+
+
 class Chrome:
     def __init__(self):
         self.profile = tempfile.mkdtemp(prefix="browse-anything-")
@@ -88,73 +119,75 @@ class Chrome:
         self.ids = itertools.count(1)
         self.pending: dict[int, asyncio.Future] = {}
         self.frames: defaultdict[str, dict[str, str]] = defaultdict(dict)  # Session -> its out-of-process iframes' frame ids -> sessions.
-        self.paused: dict[str, Callable[[dict], Awaitable]] = {}  # Session -> handler of its intercepted requests.
-        self.tasks: set[asyncio.Task] = set()
+        self.loads: dict[str, Load] = {}  # Session -> its tab's network activity.
         atexit.register(self.close)
 
-    async def solve(self, url: str, until: str = "clearance", timeout: float = 45) -> tuple[str | None, list[dict], str]:
-        """Load `url` in Chrome and pass its challenge; return the rendered HTML, the site's cookies and Chrome's user agent.
+    async def solve(self, url: str, timeout: float = 45) -> Rendered:
+        """Load `url`, passing any Cloudflare challenge, and return the rendered page with the site's cookies.
 
-        With `until="clearance"` this returns as soon as Cloudflare hands out a new `cf_clearance` cookie, and the
-        HTML is None: the request that would load the page with it is cancelled, so the caller can fetch the page
-        itself without the origin serving it twice. With `until="page"` it waits for the rendered page.
+        Once the page has loaded, it is scrolled to the bottom to trigger lazy content and given time for the
+        network to go quiet, so content that JavaScript adds is included.
         """
         async with self.lock:
             if self.process is None or self.process.returncode is not None:
                 await self.start()
-            host = urlsplit(url).hostname
-            before = clearance(await self.cookies(host))
-            target = await self.send("Target.createTarget", url="about:blank", newWindow=True, width=1280, height=900)
+            target = (await self.send("Target.createTarget", url="about:blank", newWindow=True, width=1280, height=900))["targetId"]
             session = None
             try:
-                session = (await self.send("Target.attachToTarget", targetId=target["targetId"], flatten=True))["sessionId"]
+                session = (await self.send("Target.attachToTarget", targetId=target, flatten=True))["sessionId"]
+                self.loads[session] = Load(frame=target)  # A tab's main frame has its target's id.
                 # Out-of-process iframes, such as Turnstile's, get their own sessions so their DOM can be inspected.
                 await self.send("Target.setAutoAttach", session, autoAttach=True, waitForDebuggerOnStart=False, flatten=True)
-                cleared = asyncio.get_running_loop().create_future()
-                if until == "clearance":
-                    self.paused[session] = lambda event: self.hold_document(session, event, host, before, cleared)
-                    await self.send("Fetch.enable", session, patterns=[{"resourceType": "Document", "requestStage": "Request"}])
+                await self.send("Network.enable", session)
                 await self.send("Page.navigate", session, url=url)
-                challenge = asyncio.ensure_future(self.pass_challenge(session, host))
                 try:
-                    done, _ = await asyncio.wait([challenge, cleared], timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
-                finally:
-                    challenge.cancel()
-                if not done:
-                    raise TimeoutError(f"Cloudflare challenge on {url} not passed in {timeout:.0f}s")
-                html, cookies = done.pop().result()
-                return html, cookies, (await self.send("Browser.getVersion"))["userAgent"]
+                    await asyncio.wait_for(self.pass_challenge(session), timeout)
+                except TimeoutError:
+                    raise TimeoutError(f"{url} did not load past Cloudflare in {timeout:.0f}s") from None
+                html, final = await self.settle(session)
+                return Rendered(final, self.loads[session].status, html, await self.cookies(urlsplit(final).hostname),
+                                (await self.send("Browser.getVersion"))["userAgent"])
             finally:
-                self.paused.pop(session, None)
+                self.loads.pop(session, None)
                 self.frames.pop(session, None)
                 with contextlib.suppress(Exception):
-                    await self.send("Target.closeTarget", targetId=target["targetId"])
+                    await self.send("Target.closeTarget", targetId=target)
 
-    async def hold_document(self, session: str, event: dict, host: str, before: str | None, cleared: asyncio.Future):
-        """Let a document request through, unless it is the one that would load the page with a new clearance."""
-        request = event["requestId"]
-        with contextlib.suppress(Exception):  # The target may already be closing.
-            cookies = await self.cookies(host)
-            if clearance(cookies) not in (None, before) and not cleared.done():
-                cleared.set_result((None, cookies))
-                await self.send("Fetch.failRequest", session, requestId=request, errorReason="Aborted")
-            else:
-                await self.send("Fetch.continueRequest", session, requestId=request)
-
-    async def pass_challenge(self, session: str, host: str) -> tuple[str, list[dict]]:
+    async def pass_challenge(self, session: str):
+        """Wait until the page has loaded without a challenge, clicking Turnstile's checkbox when it shows."""
         clicked = -RECLICK
         loop = asyncio.get_running_loop()
         while True:
             await asyncio.sleep(POLL)
             try:
-                html = await self.evaluate(session, "document.readyState == 'complete' && !window._cf_chl_opt && document.documentElement.outerHTML")
+                if await self.evaluate(session, "location.href != 'about:blank' && document.readyState == 'complete' && !window._cf_chl_opt"):
+                    return
             except (RuntimeError, asyncio.TimeoutError):  # Mid-navigation.
                 continue
-            if html:
-                return html, await self.cookies(host)
             if loop.time() - clicked > RECLICK and (checkbox := await self.find_turnstile(session)):
                 await self.click(session, *checkbox)
                 clicked = loop.time()
+
+    async def settle(self, session: str) -> tuple[str, str]:
+        """Scroll through the loaded page and wait for its network to go quiet; return its HTML and URL."""
+        load, loop = self.loads[session], asyncio.get_running_loop()
+        deadline = loop.time() + SETTLE
+        with contextlib.suppress(RuntimeError, asyncio.TimeoutError):  # A navigation cut scrolling short.
+            y = 0
+            while y < min(SCROLL_MAX, await self.evaluate(session, "document.documentElement.scrollHeight")) and loop.time() < deadline:
+                y += SCROLL_STEP
+                await self.evaluate(session, f"window.scrollTo(0, {y})")
+                await asyncio.sleep(SCROLL_PAUSE)
+        quiet = loop.time()
+        while loop.time() < deadline and loop.time() - quiet < IDLE:
+            await asyncio.sleep(0.1)
+            if load.requests:
+                quiet = loop.time()
+        while True:
+            try:
+                return await self.evaluate(session, SERIALIZE), await self.evaluate(session, "location.href")
+            except RuntimeError:  # Mid-navigation.
+                await asyncio.sleep(POLL)
 
     async def cookies(self, host: str) -> list[dict]:
         return [c for c in (await self.send("Storage.getCookies"))["cookies"] if f".{host}".endswith("." + c["domain"].lstrip("."))]
@@ -252,14 +285,21 @@ class Chrome:
                     future.set_exception(ConnectionError("Chrome exited"))
 
     def dispatch(self, event: dict):
-        params, parent = event["params"], event.get("sessionId")
-        if event["method"] == "Fetch.requestPaused" and (handler := self.paused.get(parent)):
-            task = asyncio.create_task(handler(params))
-            self.tasks.add(task)
-            task.add_done_callback(self.tasks.discard)
-        elif event["method"] == "Target.attachedToTarget" and parent and params["targetInfo"]["type"] == "iframe":
+        method, params, parent = event["method"], event["params"], event.get("sessionId")
+        if load := self.loads.get(parent):
+            if method == "Network.requestWillBeSent":
+                if params.get("type") == "Document" and params.get("frameId") == load.frame:
+                    load.requests = set()  # A new page: what the last one left unfinished no longer counts.
+                # Long-lived streams never finish and `blob:` URLs are local.
+                if params.get("type") not in ("EventSource", "Ping", "WebSocket") and not params["request"]["url"].startswith(("blob:", "data:")):
+                    load.requests.add(params["requestId"])
+            elif method in ("Network.loadingFinished", "Network.loadingFailed"):
+                load.requests.discard(params["requestId"])
+            elif method == "Network.responseReceived" and params["type"] == "Document" and params.get("frameId") == load.frame:
+                load.status = params["response"]["status"]
+        if method == "Target.attachedToTarget" and parent and params["targetInfo"]["type"] == "iframe":
             self.frames[parent][params["targetInfo"]["targetId"]] = params["sessionId"]
-        elif event["method"] == "Target.detachedFromTarget" and parent in self.frames:
+        elif method == "Target.detachedFromTarget" and parent in self.frames:
             self.frames[parent] = {frame: child for frame, child in self.frames[parent].items() if child != params["sessionId"]}
 
     def close(self):
@@ -269,7 +309,3 @@ class Chrome:
             except ProcessLookupError:
                 pass
         shutil.rmtree(self.profile, ignore_errors=True)
-
-
-def clearance(cookies: list[dict]) -> str | None:
-    return next((c["value"] for c in cookies if c["name"] == "cf_clearance"), None)
