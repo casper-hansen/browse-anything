@@ -1,7 +1,7 @@
-"""Pass Cloudflare challenges in a real, sandboxed, headful Chrome driven over the DevTools pipe.
+"""Pass Cloudflare challenges in a real, sandboxed Chrome driven over the DevTools pipe.
 
-The window opens in the background, parked off the screen corner, so it never takes focus. It cannot be
-minimized or hidden: Chrome throttles rendering there and Turnstile never completes.
+Chrome runs in new headless mode, which is the full browser without a window. Its user agent is set to the
+regular Chrome one, because Cloudflare blocks the `HeadlessChrome` default.
 """
 
 import asyncio
@@ -12,6 +12,7 @@ import itertools
 import json
 import os
 import random
+import re
 import shutil
 import signal
 import subprocess
@@ -39,12 +40,10 @@ CHROME_FLAGS = [
     "--password-store=basic",
     "--no-sandbox",  # Chrome's own sandbox cannot nest inside sandbox-exec or bwrap; the outer one confines it.
     "--disable-blink-features=AutomationControlled",
-    "--disable-backgrounding-occluded-windows",
-    "--disable-renderer-backgrounding",
-    "--disable-background-timer-throttling",
+    "--headless=new",
 ]
 
-OFFSCREEN = 100_000  # The window manager clamps this to the bottom-right corner of the screen.
+PLATFORMS = {"darwin": "Macintosh; Intel Mac OS X 10_15_7", "linux": "X11; Linux x86_64"}
 
 
 def detect(headers, body: str) -> bool:
@@ -57,6 +56,14 @@ def find_chrome() -> str:
         if candidate and (path := shutil.which(candidate) or (os.path.isfile(candidate) and candidate)):
             return path
     raise RuntimeError("Chrome not found; set BROWSE_ANYTHING_CHROME")
+
+
+def user_agent(chrome: str) -> str:
+    """The user agent a regular window of this Chrome sends, in Chrome's reduced format."""
+    version = subprocess.run([chrome, "--version"], capture_output=True, text=True, check=True).stdout
+    major = re.search(r"(\d+)\.\d+\.\d+\.\d+", version)[1]
+    platform = PLATFORMS["linux" if sys.platform.startswith("linux") else sys.platform]
+    return f"Mozilla/5.0 ({platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{major}.0.0.0 Safari/537.36"
 
 
 class Chrome:
@@ -73,8 +80,7 @@ class Chrome:
         async with self.lock:
             if self.process is None or self.process.returncode is not None:
                 await self.start()
-            target = await self.send("Target.createTarget", url="about:blank", newWindow=True, background=True,
-                                     left=OFFSCREEN, top=OFFSCREEN, width=1280, height=900)
+            target = await self.send("Target.createTarget", url="about:blank", width=1280, height=900)
             try:
                 session = (await self.send("Target.attachToTarget", targetId=target["targetId"], flatten=True))["sessionId"]
                 await self.send("Page.navigate", session, url=url)
@@ -148,9 +154,8 @@ class Chrome:
             os.dup2(reader, 3)
             os.dup2(writer, 4)
 
-        argv = [find_chrome(), f"--user-data-dir={self.profile}", *CHROME_FLAGS]
-        if sys.platform.startswith("linux") and not os.environ.get("DISPLAY"):
-            argv = ["xvfb-run", "-a", *argv]  # Headful without a display: a virtual one.
+        chrome = find_chrome()
+        argv = [chrome, f"--user-data-dir={self.profile}", f"--user-agent={user_agent(chrome)}", *CHROME_FLAGS]
         self.process = await asyncio.create_subprocess_exec(
             *confine(argv, self.profile), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL, preexec_fn=attach_pipes, close_fds=False, start_new_session=True)
