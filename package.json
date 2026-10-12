@@ -1,0 +1,48 @@
+{
+  "name": "browse-anything",
+  "version": "0.1.0",
+  "description": "Visit any web page from DeepSeek Harness: wreq with a Chrome fingerprint, getting past Anubis and Cloudflare in a sandboxed real Chrome.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/casper-hansen/browse-anything.git"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "mcp",
+    "browser",
+    "cloudflare",
+    "anubis"
+  ],
+  "type": "module",
+  "main": "index.js",
+  "icon": "./icon.svg",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "locale/*.json",
+    "pyproject.toml",
+    "uv.lock",
+    "README.md",
+    "LICENSE",
+    "src/browse_anything/*.py"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-mcp-client": ">=0.2.0-rc.2 <0.3.0",
+    "@deepseek-ai/schemastery": "^3.18.1"
+  }
+}

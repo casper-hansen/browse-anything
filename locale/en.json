@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Browse Anything",
+    "description": "Gives the model a browse tool that fetches any web page as markdown or HTML, getting past Anubis and Cloudflare in a sandboxed headless Chrome."
+  }
+}

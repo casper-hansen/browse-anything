@@ -1,5 +1,7 @@
 import argparse
 import asyncio
+import os
+import signal
 from typing import Literal
 
 from markdownify import markdownify
@@ -14,6 +16,14 @@ def render(html: str, format: Literal["markdown", "html"]) -> str:
 
 def serve():
     browser = Browser()
+
+    # MCP clients stop a stdio server by closing stdin, then SIGTERM, then SIGKILL. On SIGTERM, close Chrome and remove
+    # its profile, then exit at once: a normal exit would wait on the thread blocked reading stdin.
+    def stop(*_):
+        browser.close()
+        os._exit(0)
+
+    signal.signal(signal.SIGTERM, stop)
     server = MCPServer("browse-anything")
 
     @server.tool()

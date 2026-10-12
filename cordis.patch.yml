@@ -1,0 +1,7 @@
+# browse-anything bundle patch: inserts the plugin that runs the Python MCP server with uv and connects it
+# through DSH's MCP client, so the model gets `mcp__browse-anything__browse`. Override fields from your profile's
+# cordis.patch.yml with an entry that targets `id: browse-anything` (its `config` is replaced whole).
+- insert:
+    - id: browse-anything
+      name: browse-anything
+      config: {}
