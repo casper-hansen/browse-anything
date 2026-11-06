@@ -254,11 +254,11 @@ class Tools:
         tab = await self.tab()
         async with tab.lock:
             items = await tab.snapshot()
-        count, blocks = find(items, pattern, args.get("maxResults"))
+        count, shown, blocks = find(items, pattern, args.get("maxResults"))
         if not count:
             return Response(tab, result=[f'No matches for {text or regex} in the page snapshot.'])
-        shown = blocks.count("\n----\n") + 1
-        header = f"Found {count} matches for {json.dumps(text or regex)}" + (f" (showing first {shown})" if shown < count else "") + ":"
+        header = f"Found {count} matches for {json.dumps(text or regex, ensure_ascii=False)}" + \
+                 (f" (showing first {shown})" if shown < count else "") + ", each under its path in the snapshot:"
         if args.get("filename"):
             return Response(tab, result=[header, f"- [Saved to]({self.save(blocks, args['filename'])})"])
         return Response(tab, result=[header, "", self.fit(blocks, RESULT_MAX, "find", "yml")])

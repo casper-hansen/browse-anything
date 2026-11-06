@@ -287,29 +287,36 @@ def render(items: list[Item | str], depth: int | None = None, boxes: bool = Fals
     return "\n".join("  " * line.indent + line.text for line in lines(items, depth, boxes))
 
 
-def find(items: list[Item | str], pattern: re.Pattern, max_results: int | None = None, context: int = 4) -> tuple[int, str]:
-    """Matching lines, each under its path from the root and followed by a few lines of its subtree."""
+def find(items: list[Item | str], pattern: re.Pattern, max_results: int | None = None, context: int = 4) -> tuple[int, int, str]:
+    """The snapshot cut down to the matching lines: one tree of each match under its path from the root, followed by
+    a few lines of its subtree. Paths that matches share are shown once, and the links on a path keep their URL.
+
+    Returns the number of matches, how many are shown, and the tree.
+    """
     all_lines = lines(items)
     matches = [i for i, line in enumerate(all_lines) if pattern.search(line.text)]
-    # A match inside another match's shown context is already visible there.
-    blocks, shown = [], set()
+    urls = {line.parent: i for i, line in enumerate(all_lines) if line.text.startswith("- /url: ")}
+    chosen: set[int] = set()
+    shown = 0
     for index in matches:
-        if index in shown:
+        if index in chosen:  # Already visible in another match's context.
+            shown += 1
             continue
-        if max_results is not None and len(blocks) >= max_results:
+        if max_results is not None and shown >= max_results:
             break
-        path, parent = [], all_lines[index].parent
-        while parent is not None:
-            path.append(parent)
+        shown += 1
+        parent = all_lines[index].parent
+        while parent is not None and parent not in chosen:
+            chosen.add(parent)
+            if parent in urls:
+                chosen.add(urls[parent])
             parent = all_lines[parent].parent
-        chosen = list(reversed(path)) + [index]
+        chosen.add(index)
         following = index + 1
         while following < len(all_lines) and all_lines[following].indent > all_lines[index].indent and following - index <= context:
-            chosen.append(following)
+            chosen.add(following)
             following += 1
-        shown.update(chosen)
-        blocks.append("\n".join("  " * all_lines[i].indent + all_lines[i].text for i in chosen))
-    return len(matches), "\n\n----\n\n".join(blocks)
+    return len(matches), shown, "\n".join("  " * all_lines[i].indent + all_lines[i].text for i in sorted(chosen))
 
 
 def find_item(items: list[Item | str], ref: str) -> Item | None:

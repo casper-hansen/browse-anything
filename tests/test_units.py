@@ -121,11 +121,32 @@ def test_snapshot_depth_and_find():
         node(6, "link", "Pricing", backend=6, parent=5),
     )
     assert render(items, depth=1) == '- navigation "Main" [ref=e1]'
-    count, text = find(items, re.compile("pricing", re.I))
-    assert count == 1
+    count, shown, text = find(items, re.compile("pricing", re.I))
+    assert count == shown == 1
     # A list entry that is just one link is shown as the link.
     assert text.splitlines() == ['- navigation "Main" [ref=e1]:', "  - list [ref=e3]:", '    - link "Pricing" [ref=e4]']
     assert [line.parent for line in lines(items)] == [None, 0, 0, 2]
+
+
+def test_find_merges_paths_and_keeps_link_urls():
+    items = page(
+        node(1, "RootWebArea", "", [2, 6], backend=1, properties={"url": "https://shop.example/"}),
+        node(2, "link", "SSD 1TB", [3, 4], backend=2, properties={"url": "https://shop.example/p/1"}, parent=1),
+        node(3, "generic", None, [5], backend=3, parent=2),
+        node(5, "StaticText", "1.810 kr.", parent=3),
+        node(4, "button", "Or 563 kr./month", backend=4, parent=2),
+        node(6, "link", "SSD 2TB", [7], backend=6, properties={"url": "https://shop.example/p/2"}, parent=1),
+        node(7, "StaticText", "3.569 kr.", parent=6),
+        displays={3: "block"},
+    )
+    count, shown, text = find(items, re.compile("kr"))
+    assert (count, shown) == (3, 3)
+    assert text.splitlines() == [
+        '- link "SSD 1TB" [ref=e1]:', "  - /url: /p/1",  # The link is on the path once, with its URL.
+        "  - generic [ref=e2]: 1.810 kr.",
+        '  - button "Or 563 kr./month" [ref=e3]',
+        '- link "SSD 2TB" [ref=e4]:', "  - text: 3.569 kr.", "  - /url: /p/2",
+    ]
 
 
 def test_snapshot_relative_links_and_redundant_children():
