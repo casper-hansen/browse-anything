@@ -224,9 +224,11 @@ class Message:
     kind: str  # Shown in brackets: LOG, ERROR, WARNING, INFO, DEBUG, ...
     text: str
     location: str = ""
+    browser: bool = False  # Reported by Chrome itself (failed loads, preload hints, ...) rather than the page's code.
 
-    def line(self) -> str:
-        return f"[{self.kind}] {self.text}" + (f" @ {self.location}" if self.location else "")
+    def line(self, limit: int | None = None) -> str:
+        text = self.text if limit is None or len(self.text) <= limit else self.text[:limit - 1] + "…"
+        return f"[{self.kind}] {text}" + (f" @ {self.location}" if self.location else "")
 
 
 def is_local(url: str) -> bool:
@@ -419,7 +421,7 @@ class Tab:
             entry = params["entry"]
             level = {"verbose": "debug", "info": "info", "warning": "warning", "error": "error"}.get(entry["level"], "info")
             location = f"{entry['url']}:{entry.get('lineNumber', 0)}" if entry.get("url") else ""
-            self.log(Message(level, level.upper(), entry["text"], location))
+            self.log(Message(level, level.upper(), entry["text"], location, browser=True))
 
     def log(self, message: Message):
         self.messages.append(message)

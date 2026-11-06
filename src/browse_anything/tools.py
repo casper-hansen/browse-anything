@@ -23,7 +23,7 @@ from .snapshot import find, find_item, find_roles, render, walk_items
 SNAPSHOT_INLINE = 12_000  # Characters of snapshot shown after an action; more is saved to a file.
 SNAPSHOT_MAX = 50_000  # Characters shown by browser_snapshot.
 RESULT_MAX = 40_000  # Characters of other results shown; more is saved to a file.
-NEW_MESSAGES = 10  # Console messages listed under Events.
+NEW_ERRORS, NEW_LOGS = 3, 5  # Most new page errors, and console output of the page's own code, listed under Events.
 
 
 def stamp() -> str:
@@ -128,17 +128,29 @@ class Tools:
         if tab and not tab.closed:
             events = list(tab.events)
             tab.events.clear()
-            fresh = tab.new_messages()
-            if fresh:
-                shown = [f"- {m.line()}" for m in fresh[-NEW_MESSAGES:]]
-                if len(fresh) > NEW_MESSAGES:
-                    shown.insert(0, f"- {len(fresh) - NEW_MESSAGES} earlier new console messages (see browser_console_messages)")
-                events.append("New console messages:\n" + "\n".join(shown))
+            if fresh := tab.new_messages():
+                events.append(self.console_events(fresh, tab))
             if events:
                 sections.append("### Events\n" + "\n".join(e if e.startswith("New console") else f"- {e}" for e in events))
         text = "\n".join(sections) or "Done"
         content: list = [TextContent(type="text", text=text + "\n" if response.images else text)]
         return content + response.images
+
+    @staticmethod
+    def console_events(fresh: list, tab: Tab) -> str:
+        """New console messages for the Events section: the page's errors, and with full capture the page's own
+        output; Chrome's own warnings (preload hints, deprecations, ...) are only counted, since every big site has
+        dozens and they say nothing about the task."""
+        errors = [m for m in fresh if m.level == "error"]
+        logs = [m for m in fresh if m.level != "error" and not m.browser] if tab.runtime else []
+        listed = errors[-NEW_ERRORS:] + logs[-NEW_LOGS:]
+        shown = [f"- {m.line(300)}" for m in listed]
+        rest = [m for m in fresh if m not in listed]
+        if rest:
+            warnings = sum(m.level == "warning" for m in rest)
+            shown.append(f"- {len(rest)} {'more ' if shown else ''}console message{'s' if len(rest) > 1 else ''}"
+                         + (f" ({warnings} warning{'s' if warnings > 1 else ''})" if warnings else "") + "; see browser_console_messages")
+        return "New console messages:\n" + "\n".join(shown)
 
     async def snapshot_section(self, tab: Tab, mode: str) -> str:
         items = await tab.snapshot()
