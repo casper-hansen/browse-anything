@@ -86,6 +86,8 @@ async def test_playground(site, tmp_path):
         after, _, _ = await call("browser_file_upload", paths=[str(upload)])
         assert "file upload.txt 9" in after
 
+        after, _, _ = await call("browser_click", target=ref(text, 'combobox "Custom select"'))  # A 0x0 input.
+        assert "custom opened" in after and "enclosing control was clicked" in after
         after, _, _ = await call("browser_click", target=ref(text, 'button "Shadow button"'))
         assert "shadow clicked" in after
         after, _, _ = await call("browser_click", target=ref(text, 'button "Inner button"'))
