@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Playground</title>
+<style>
+  body { font-family: sans-serif; }
+  #overlay { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: none; }
+  #overlay.on { display: block; }
+  .card { cursor: pointer; border: 1px solid #ccc; padding: 4px; margin: 4px; width: 200px; }
+  #drop, #target { width: 160px; height: 60px; border: 2px dashed #888; margin: 6px; }
+  #draggable { width: 80px; padding: 6px; background: #def; }
+  .tall { height: 1500px; }
+</style>
+</head>
+<body>
+  <h1>Playground</h1>
+  <form id="form" onsubmit="event.preventDefault(); document.getElementById('out').textContent = 'submitted ' + new FormData(this).get('name') + ' ' + new FormData(this).get('color') + ' ' + (new FormData(this).get('agree') || 'off')">
+    <label>Name <input name="name" id="name" value="old"></label>
+    <label>Notes <textarea name="notes" id="notes"></textarea></label>
+    <label>Color <select name="color" id="color"><option value="r">Red</option><option value="g">Green</option><option value="b">Blue</option></select></label>
+    <label><input type="checkbox" name="agree" id="agree"> I agree</label>
+    <label>Volume <input type="range" id="volume" min="0" max="10" value="2"></label>
+    <label>File <input type="file" id="file" onchange="document.getElementById('out').textContent = 'file ' + this.files[0].name + ' ' + this.files[0].size"></label>
+    <button type="submit">Submit</button>
+  </form>
+  <p id="out">nothing yet</p>
+  <p id="keys">keys:</p>
+  <button onclick="alert('hello there')">Alert</button>
+  <button onclick="document.getElementById('out').textContent = 'prompt ' + prompt('Your name?')">Prompt</button>
+  <button onclick="document.getElementById('out').textContent = 'confirm ' + confirm('Sure?')">Confirm</button>
+  <button onclick="console.log('logged', {a: 1}); console.warn('careful'); setTimeout(() => { throw new Error('boom') }, 0); Promise.reject(new Error('nope'))">Console</button>
+  <button onclick="document.getElementById('overlay').classList.add('on')">Show overlay</button>
+  <button id="later" onclick="setTimeout(() => document.getElementById('out').textContent = 'later done', 1500)">Later</button>
+  <a href="/playground.html?popup=1" target="_blank">Open popup</a>
+  <a href="/download.txt" download="hello.txt">Download</a>
+  <a href="/second.html">Second page</a>
+  <div class="card" onclick="document.getElementById('out').textContent = 'card clicked'">Clickable card <span>with a span</span></div>
+  <div id="draggable" draggable="true" ondragstart="event.dataTransfer.setData('text/plain', 'dragged!')">Drag me</div>
+  <div id="target" ondragover="event.preventDefault()" ondrop="event.preventDefault(); document.getElementById('out').textContent = 'dropped ' + event.dataTransfer.getData('text/plain')">Drop target</div>
+  <div id="drop" ondragover="event.preventDefault()" ondrop="event.preventDefault(); const f = event.dataTransfer.files; document.getElementById('out').textContent = 'drop ' + (f.length ? f[0].name : event.dataTransfer.getData('text/plain'))">Drop zone</div>
+  <my-widget></my-widget>
+  <iframe id="same" srcdoc="<button onclick=&quot;parent.document.getElementById('out').textContent='inner clicked'&quot;>Inner button</button>" width="300" height="60"></iframe>
+  <div class="tall"></div>
+  <button id="bottom" onclick="document.getElementById('out').textContent = 'bottom clicked'">Bottom button</button>
+  <div id="overlay" onclick="this.classList.remove('on')"></div>
+  <script>
+    customElements.define('my-widget', class extends HTMLElement {
+      connectedCallback() {
+        const root = this.attachShadow({mode: 'open'});
+        root.innerHTML = '<button>Shadow button</button>';
+        root.querySelector('button').onclick = () => document.getElementById('out').textContent = 'shadow clicked';
+      }
+    });
+    document.addEventListener('keydown', e => document.getElementById('keys').textContent += ' ' + (e.ctrlKey ? 'Ctrl+' : '') + e.key);
+    if (location.search.includes('popup')) document.title = 'Popup';
+  </script>
+</body>
+</html>

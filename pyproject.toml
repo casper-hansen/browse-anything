@@ -1,7 +1,7 @@
 [project]
 name = "browse-anything"
-version = "0.1.0"
-description = "Visit any web page with wreq, getting past Anubis and Cloudflare in a sandboxed real Chrome."
+version = "0.2.0"
+description = "A browser for agents that gets through bot walls: Playwright MCP's tools on a sandboxed, stealthy Chrome that passes Cloudflare, Turnstile and Anubis."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

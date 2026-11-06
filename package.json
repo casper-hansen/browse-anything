@@ -1,7 +1,7 @@
 {
   "name": "browse-anything",
-  "version": "0.1.0",
-  "description": "Visit any web page from DeepSeek Harness: wreq with a Chrome fingerprint, getting past Anubis and Cloudflare in a sandboxed real Chrome.",
+  "version": "0.2.0",
+  "description": "A browser for DeepSeek Harness that gets through bot walls: Playwright MCP's browser_* tools on a sandboxed, stealthy Chrome that passes Cloudflare, Turnstile and Anubis.",
   "license": "MIT",
   "repository": {
     "type": "git",
