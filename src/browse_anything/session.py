@@ -62,6 +62,13 @@ NET_HINTS = {
     "net::ERR_INTERNET_DISCONNECTED": " (no internet connection)",
 }
 
+# The state of the page's Turnstile widgets: "none", "passed", or "pending". Each widget has a hidden input that gets
+# its token once it passes. (Its iframe is no sign: out of process, it is not in the page's frame tree.)
+TURNSTILE_STATE = """(() => {
+    const fields = [...document.querySelectorAll('input[name="cf-turnstile-response"]')];
+    return !fields.length ? 'none' : fields.every(f => f.value) ? 'passed' : 'pending';
+})()"""
+
 POLL = 0.25  # Seconds between checks of a challenge's progress.
 RECLICK = 4  # Seconds to let a click verify before clicking a checkbox that is still shown.
 CHALLENGE_TIMEOUT = 45
@@ -521,13 +528,32 @@ class Tab:
             return await cloudflare.find_turnstile(self.cdp, self.id, self.frames)
         return None
 
-    async def embedded_turnstile(self):
-        """Click a Turnstile widget embedded in a regular page, such as a login form's, if it asks for it."""
-        with contextlib.suppress(ProtocolError, TimeoutError, ConnectionError):
-            tree = json.dumps(await self.send("Page.getFrameTree"))
-            if "challenges.cloudflare.com" in tree and (checkbox := await self.turnstile()):
+    async def embedded_turnstile(self, settle: float = 4, limit: float = 25):
+        """See a Turnstile widget embedded in a regular page through, clicking its checkbox if it asks for one.
+
+        Such widgets guard login forms, and whole pages too: Bing's "One last step" page is one. A widget starts out
+        "Verifying..." and either passes by itself or shows a checkbox a few seconds later, so it is watched until it
+        has put its token in the page, for `settle` seconds if it shows no checkbox, and at most `limit` seconds.
+        """
+        started, clicked, navigations = time.monotonic(), -RECLICK, self.navigations
+        while not self.dialog and self.navigations == navigations:
+            try:
+                if await self.eval(TURNSTILE_STATE, isolated=True, timeout=5) != "pending":
+                    return
+                checkbox = await self.turnstile()
+            except (ProtocolError, TimeoutError, ConnectionError):
+                return
+            elapsed = time.monotonic() - started
+            if elapsed > limit or (checkbox is None and clicked < 0 and elapsed > settle):
+                return
+            if checkbox and time.monotonic() - clicked > RECLICK:
                 await self.click_at(*checkbox)
-                await asyncio.sleep(1.5)
+                clicked = time.monotonic()
+            await asyncio.sleep(0.5)
+        # Passing it sent the page on, as Bing's does: let the next page load, past any challenge of its own.
+        if self.navigations != navigations and not self.dialog:
+            await self.wait_loaded()
+            await self.pass_challenges()
 
     async def navigate(self, url: str):
         url = url.strip()
