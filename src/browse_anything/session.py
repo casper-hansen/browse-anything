@@ -28,7 +28,7 @@ from urllib.parse import urljoin, urlsplit
 from . import cloudflare, keys
 from .cdp import CDP, ProtocolError
 from .chrome import launch
-from .snapshot import REF, Frame, Item, build, walk_items
+from .snapshot import REF, Frame, Item, build, controls, find_item, walk_items
 
 WORLD = "__browse_anything__"
 RELAY = "browse-anything-" + secrets.token_hex(8)  # The DOM event name main-world errors are relayed under.
@@ -689,8 +689,41 @@ class Tab:
             if covering is None:
                 return px, py
             await asyncio.sleep(0.25)
-        raise ToolError(f"{covering} intercepts pointer events at the element. Dismiss it first: click its close button, "
-                        "press Escape, or click it with a CSS selector as the target.")
+        raise ToolError(f"{covering} intercepts pointer events at the element.{await self.cover_hint(px, py)}")
+
+    async def cover_hint(self, x: float, y: float) -> str:
+        """Where the element covering (x, y) is in the snapshot, and the controls that may dismiss it."""
+        fallback = " Dismiss it first, for example with its close button or Escape."
+        try:
+            context = await self.world()
+            chain = await self.send("Runtime.evaluate", contextId=context, returnByValue=False, expression=f"""(() => {{
+                const out = [];
+                for (let n = document.elementFromPoint({x}, {y}); n && n !== document.body && out.length < 25; n = n.parentElement) out.push(n);
+                return out;
+            }})()""")
+            properties = (await self.send("Runtime.getProperties", objectId=chain["result"]["objectId"], ownProperties=True))["result"]
+            ancestors = [p["value"]["objectId"] for p in sorted((p for p in properties if p["name"].isdigit()), key=lambda p: int(p["name"]))]
+            if not self.items:
+                await self.snapshot()
+            chosen = None
+            for object_id in ancestors:
+                backend = (await self.send("DOM.describeNode", objectId=object_id))["node"]["backendNodeId"]
+                ref = self.ref_ids.get(("", backend))
+                item = find_item(self.items, ref) if ref else None
+                if item is None:
+                    continue
+                if item.role in ("dialog", "alertdialog"):
+                    chosen = item
+                    break
+                if chosen is None and controls(item):
+                    chosen = item
+        except (ProtocolError, TimeoutError, KeyError):
+            return fallback
+        if chosen is None:
+            return fallback
+        listed = ", ".join(f'{c.role} "{c.name}" [ref={c.ref}]' if c.name else f"{c.role} [ref={c.ref}]" for c in controls(chosen))
+        where = f'{chosen.role}{f" {chosen.name!r}" if chosen.name else ""} [ref={chosen.ref}]'
+        return f" It is part of {where}" + (f", whose controls are: {listed}." if listed else ".") + " Dismiss it first."
 
     async def covering(self, element: Element, x: float, y: float) -> str | None:
         """What covers `element` at (x, y), or None when a click there reaches it."""

@@ -6,9 +6,10 @@ children hoisted, inline formatting (`strong`, `emphasis`, ...) is merged into t
 nodes are dropped, so snapshots are a fraction of the size with the same refs to act on.
 """
 
+import base64
 import re
 from collections.abc import Callable
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qs, unquote, urlsplit, urlunsplit
 from dataclasses import dataclass, field
 
 HOIST = {"none", "generic", "LabelText", "Section", "MenuListPopup", "LayoutTable", "LayoutTableRow", "LayoutTableCell",
@@ -26,7 +27,7 @@ PROPS = ["checked", "disabled", "expanded", "level", "pressed", "selected"]  # S
 INTERACTIVE = {"link", "button", "checkbox", "radio", "switch", "tab", "menuitem", "menuitemcheckbox", "menuitemradio",
                "option", "combobox", "textbox", "searchbox", "slider", "spinbutton", "treeitem", "DisclosureTriangle",
                "ListBoxOption", "MenuListOption", "PopUpButton", "ToggleButton"}
-MAX_NAME, MAX_TEXT, MAX_URL = 300, 2000, 300
+MAX_NAME, MAX_TEXT = 300, 2000
 REF = re.compile(r"^(f\d+)?e\d+$")
 
 
@@ -158,7 +159,7 @@ def _convert(frame: Frame, by_id: dict, node: dict, ref_for: RefFor, parent_curs
     if properties.get("focused") and role not in ("RootWebArea", "WebArea"):
         item.props.append("active")
     if role == "link" and (url := properties.get("url")):
-        item.url = clip(relative(str(url), frame.url), MAX_URL)
+        item.url = relative(unwrap(str(url)), frame.url)
     if role in VALUED and (value := squash(_value(node, "value"))):
         item.text = clip(value, MAX_TEXT)
     if role == "combobox" and any(isinstance(c, Item) for c in children):
@@ -170,6 +171,32 @@ def _convert(frame: Frame, by_id: dict, node: dict, ref_for: RefFor, parent_curs
         children = []
     item.children = children
     return [item]
+
+
+def unwrap(url: str) -> str:
+    """The destination of a search engine's redirect link, which is what a reader needs to know; else `url`.
+
+    URLs are otherwise shown whole, since a cut-off URL cannot be followed. Inline `data:` URLs are abbreviated.
+    """
+    if url.startswith("data:"):
+        return url.split(",", 1)[0] + ",…" if len(url) > 100 else url
+    try:
+        parts = urlsplit(url)
+        host, query = parts.netloc.lower(), parse_qs(parts.query)
+        if host.endswith("bing.com") and parts.path in ("/ck/a", "/aclick") and (u := query.get("u", [""])[0]):
+            encoded = u[2:] if parts.path == "/ck/a" and u.startswith("a1") else u
+            target = unquote(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)).decode())
+        elif re.match(r"(www\.)?google\.[a-z.]+$", host) and parts.path == "/url":
+            target = (query.get("q") or query.get("url") or [""])[0]
+        elif host.endswith("duckduckgo.com") and parts.path == "/l/":
+            target = query.get("uddg", [""])[0]
+        else:
+            return url
+    except (ValueError, UnicodeDecodeError):
+        return url
+    if target.startswith("/"):  # Bing's own pages, such as its shopping results.
+        target = urlunsplit((parts.scheme, parts.netloc, "", "", "")) + target
+    return target if re.match(r"https?://", target) else url
 
 
 def relative(url: str, base: str) -> str:
@@ -293,6 +320,27 @@ def find_item(items: list[Item | str], ref: str) -> Item | None:
             if found := find_item(entry.children, ref):
                 return found
     return None
+
+
+def find_roles(items: list[Item | str], roles: set[str], skip: Item | None = None) -> list[Item]:
+    """The outermost items with one of `roles`, not looking inside `skip`."""
+    found = []
+    for entry in items:
+        if not isinstance(entry, Item) or entry is skip:
+            continue
+        if entry.role in roles:
+            found.append(entry)
+        else:
+            found += find_roles(entry.children, roles, skip)
+    return found
+
+
+CONTROLS = {"button", "link", "checkbox", "radio", "switch", "menuitem", "tab", "option", "combobox", "textbox"}
+
+
+def controls(item: Item, limit: int = 8) -> list[Item]:
+    """The first controls inside `item`, such as a cookie banner's buttons."""
+    return [entry for entry in walk_items(item.children) if entry.role in CONTROLS and entry.ref][:limit]
 
 
 def walk_items(items: list[Item | str]):

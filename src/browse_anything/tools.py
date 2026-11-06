@@ -18,7 +18,7 @@ from mcp_types import ImageContent, TextContent, Tool, ToolAnnotations
 
 from .browser import Browser
 from .session import Session, Tab, ToolError
-from .snapshot import find, find_item, render, walk_items
+from .snapshot import find, find_item, find_roles, render, walk_items
 
 SNAPSHOT_INLINE = 12_000  # Characters of snapshot shown after an action; more is saved to a file.
 SNAPSHOT_MAX = 50_000  # Characters shown by browser_snapshot.
@@ -150,9 +150,11 @@ class Tools:
         if mode == "action":
             # The start of the main content is what a model looks for first: results, an article, a product's offers.
             main = next((item for item in walk_items(items) if item.role == "main"), None)
-            shown = render([main]) if main else text
+            # Open dialogs, such as cookie banners, block the page; they are shown even outside the main content.
+            dialogs = find_roles(items, {"dialog", "alertdialog"}, skip=main) if main else []
+            shown = render(dialogs + [main]) if main else text
             cut = shown.rfind("\n", 0, limit) if len(shown) > limit else len(shown)
-            where = "the start of its main content" if main else "its start"
+            where = ("open dialogs and " if dialogs else "") + "the start of its main content" if main else "its start"
             return f"### Snapshot\nThe snapshot has {len(text):,} characters, so this shows {where}. The full snapshot is in " \
                    f"{path}: search it with browser_find, or read parts with browser_snapshot (`target`, `depth`).\n" \
                    f"```yaml\n{shown[:cut]}\n```" + ("\n… (cut off here)" if cut < len(shown) else "")

@@ -6,9 +6,11 @@ import itertools
 from .cdp import ProtocolError
 
 # Main-world check of the page for a challenge interstitial; returns its kind, or null on a regular page.
+# `_cf_chl_opt` alone does not mean a challenge: sites with Cloudflare's bot management define it on every page for
+# their background checks (`challenge-platform/scripts/...`). Only the interstitial runs the challenge orchestrator.
 INTERSTITIAL = r"""(() => {
     if (location.href === 'about:blank') return 'blank';
-    if (window._cf_chl_opt) return 'Cloudflare';
+    if (window._cf_chl_opt && [...document.scripts].some(s => s.src.includes('/challenge-platform/') && s.src.includes('/orchestrate/'))) return 'Cloudflare';
     if (document.getElementById('anubis_challenge')) return 'Anubis';
     if (/^(Just a moment\.\.\.|Checking your browser|Vercel Security Checkpoint|DDoS-Guard|Making sure you('|’)re not a bot)/i.test(document.title)) return document.title;
     return document.readyState === 'complete' ? null : 'loading';
@@ -17,7 +19,7 @@ INTERSTITIAL = r"""(() => {
 
 def detect(headers, body: str) -> bool:
     mitigated = headers.get("cf-mitigated")
-    return (mitigated is not None and bytes(mitigated) == b"challenge") or "window._cf_chl_opt" in body
+    return (mitigated is not None and bytes(mitigated) == b"challenge") or ("window._cf_chl_opt" in body and "/orchestrate/" in body)
 
 
 def walk(node: dict):

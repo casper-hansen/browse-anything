@@ -192,3 +192,24 @@ def test_tools_cover_playwright_mcp():
     for name, description, schema, handler, read_only, modal_ok in TOOLS:
         assert schema["type"] == "object" and set(schema["required"]) <= set(schema["properties"]), name
         assert handler == name
+
+
+def test_cloudflare_bot_management_is_not_a_challenge():
+    from browse_anything import cloudflare
+    # Sites with Cloudflare bot management define _cf_chl_opt on every page; only the interstitial orchestrates.
+    page = '<script>window._cf_chl_opt={a:1}</script><script src="/cdn-cgi/challenge-platform/scripts/precursor/main.js"></script>'
+    assert not cloudflare.detect({}, page)
+    assert cloudflare.detect({}, '<script>window._cf_chl_opt={a:1}</script><script src="/cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1"></script>')
+
+
+def test_unwrap_search_redirects():
+    import base64
+    from browse_anything.snapshot import unwrap
+    target = "https://www.proshop.dk/SSD/Samsung-9100/3347706"
+    bing = "https://www.bing.com/ck/a?!&&p=abc&u=a1" + base64.urlsafe_b64encode(target.encode()).decode().rstrip("=") + "&ntb=1"
+    assert unwrap(bing) == target
+    assert unwrap("https://www.google.com/url?q=https://example.com/a%3Fb&sa=U") == "https://example.com/a?b"
+    assert unwrap("https://duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.org%2Fx") == "https://example.org/x"
+    assert unwrap("https://example.com/ck/a?u=a1xyz") == "https://example.com/ck/a?u=a1xyz"
+    long = "https://example.com/" + "x" * 1000
+    assert unwrap(long) == long  # URLs are never cut off.
