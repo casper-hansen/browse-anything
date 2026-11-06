@@ -7,6 +7,7 @@ response says where.
 
 import asyncio
 import base64
+import contextlib
 import json
 import re
 import time
@@ -192,11 +193,24 @@ class Tools:
 
     async def action(self, tab: Tab, work, limit: float = 2) -> Response:
         """Run a page action, then wait for what it set off, and answer with the resulting page."""
+        before = set(map(id, self.session.tabs))
         async with tab.lock:
             navigations, downloads = tab.navigations, len(tab.downloads)
             result = await tab.act(work())
             if not (tab.dialog or tab.chooser):
                 await tab.after_action(navigations, downloads, limit)
+        # Like a browser does with a link that opens a new tab, switch to it: that page is what the action was for.
+        opened = [t for t in self.session.tabs if id(t) not in before and t.opener == tab.target and not t.closed]
+        if opened and not (tab.dialog or tab.chooser):
+            new = opened[-1]
+            tab.events = [e for e in tab.events if not e.startswith("New tab ")]
+            await self.session.select(new)
+            async with new.lock:
+                with contextlib.suppress(ToolError, TimeoutError):
+                    await new.settle_navigation(lazy=False)
+            new.events.insert(0, f"The action opened this page in new tab {self.session.tabs.index(new)}, now the current tab; "
+                                 f"the page it came from is still open in tab {self.session.tabs.index(tab)}")
+            tab = new
         response = Response(tab, snapshot="action")
         if isinstance(result, list):
             response.result = result

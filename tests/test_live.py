@@ -98,7 +98,7 @@ async def test_playground(site, tmp_path):
         assert Path(re.search(r"Downloaded file hello.txt to (\S+)", after)[1]).read_text() == "hello download\n"
 
         after, _, _ = await call("browser_click", target=ref(text, 'link "Open popup"'))
-        assert "- 1: [Popup]" in after
+        assert "- 1: (current) [Popup]" in after and "now the current tab" in after  # Switched to the new tab.
         await call("browser_tabs", action="close", index=1)
 
         value, _, _ = await call("browser_evaluate", function="() => ({title: document.title, n: 6 * 7})")
