@@ -784,9 +784,36 @@ class Tab:
                                 buttons=flag if kind == "mousePressed" else 0, modifiers=modifiers)
                 await asyncio.sleep(random.uniform(0.03, 0.08))
 
-    async def click(self, element: Element, button: str = "left", count: int = 1, modifiers: list[str] = ()):
-        x, y = await self.point(element)
+    async def click(self, element: Element, button: str = "left", count: int = 1, modifiers: list[str] = ()) -> list[str]:
+        notes = []
+        try:
+            x, y = await self.point(element)
+        except ToolError as error:
+            # Custom dropdowns and checkboxes hide their real input at zero size inside the control a person clicks.
+            if "has no size" not in str(error) or not (container := await self.sized_ancestor(element)):
+                raise
+            x, y = await self.point(container)
+            notes.append("The element has no size, so its enclosing control was clicked instead.")
         await self.hold(modifiers, lambda mask: self.click_at(x, y, button, count, mask))
+        return notes
+
+    async def sized_ancestor(self, element: Element, levels: int = 3) -> Element | None:
+        """The nearest of the element's first ancestors that has a size on screen."""
+        with contextlib.suppress(ProtocolError, ToolError, KeyError):
+            params = {"backendNodeId": element.backend}
+            node = (await self.send("DOM.describeNode", element.session, **params, depth=0))["node"]
+            for _ in range(levels):
+                parent = await self.call(Element(element.session, node["backendNodeId"], element.frame),
+                                         "function() { return this.parentElement; }", isolated=False, by_value=False)
+                if "objectId" not in parent:
+                    return None
+                node = (await self.send("DOM.describeNode", element.session, objectId=parent["objectId"]))["node"]
+                candidate = Element(element.session, node["backendNodeId"], element.frame)
+                with contextlib.suppress(ToolError):
+                    _, _, w, h = await self.box(candidate)
+                    if w >= 2 and h >= 2:
+                        return candidate
+        return None
 
     async def drag_xy(self, sx: float, sy: float, ex: float, ey: float):
         await self.mouse_to(sx, sy)
