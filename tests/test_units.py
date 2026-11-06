@@ -67,7 +67,7 @@ def test_snapshot_hoists_wrappers_and_keeps_semantics():
     )
     assert render(items) == "\n".join([
         '- heading "Hello" [level=2] [ref=e1]',
-        '- link "Docs" [ref=e2] [cursor=pointer]:',
+        '- link "Docs" [ref=e2]:',  # Links are clickable by nature: no [cursor=pointer].
         "  - /url: https://example.com/docs",
         '- button "Go" [disabled] [ref=e3]',
     ])
@@ -123,8 +123,28 @@ def test_snapshot_depth_and_find():
     assert render(items, depth=1) == '- navigation "Main" [ref=e1]'
     count, text = find(items, re.compile("pricing", re.I))
     assert count == 1
-    assert text.splitlines() == ['- navigation "Main" [ref=e1]:', "  - list [ref=e3]:", "    - listitem [ref=e4]:", '      - link "Pricing" [ref=e5]']
-    assert [line.parent for line in lines(items)] == [None, 0, 0, 2, 3]
+    # A list entry that is just one link is shown as the link.
+    assert text.splitlines() == ['- navigation "Main" [ref=e1]:', "  - list [ref=e3]:", '    - link "Pricing" [ref=e4]']
+    assert [line.parent for line in lines(items)] == [None, 0, 0, 2]
+
+
+def test_snapshot_relative_links_and_redundant_children():
+    items = page(
+        node(1, "RootWebArea", "", [2, 3, 4, 5], backend=1, properties={"url": "https://shop.example/?q=ssd"}),
+        node(2, "link", "Deals", backend=2, properties={"url": "https://shop.example/deals?x=1"}, parent=1),
+        node(3, "link", "Skip", backend=3, properties={"url": "https://shop.example/?q=ssd#main"}, parent=1),
+        node(4, "link", "Elsewhere", backend=4, properties={"url": "https://other.example/a"}, parent=1),
+        node(5, "button", "Dark mode", [6], backend=5, parent=1),
+        node(6, "generic", None, [7], backend=6, parent=5),
+        node(7, "StaticText", "Dark mode", parent=6),
+        displays={6: "block"},
+    )
+    assert render(items) == "\n".join([
+        '- link "Deals" [ref=e1]:', "  - /url: /deals?x=1",
+        '- link "Skip" [ref=e2]:', "  - /url: '#main'",
+        '- link "Elsewhere" [ref=e3]:', "  - /url: https://other.example/a",
+        '- button "Dark mode" [ref=e4]',
+    ])
 
 
 def test_keys():

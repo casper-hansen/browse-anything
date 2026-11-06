@@ -8,6 +8,7 @@ nodes are dropped, so snapshots are a fraction of the size with the same refs to
 
 import re
 from collections.abc import Callable
+from urllib.parse import urlsplit, urlunsplit
 from dataclasses import dataclass, field
 
 HOIST = {"none", "generic", "LabelText", "Section", "MenuListPopup", "LayoutTable", "LayoutTableRow", "LayoutTableCell",
@@ -21,6 +22,10 @@ ROLES = {"image": "img", "Iframe": "iframe", "IframePresentational": "iframe", "
          "PdfRoot": "document", "RootWebArea": "document", "WebArea": "document", "Code": "code"}
 VALUED = {"textbox", "searchbox", "combobox", "spinbutton", "slider", "TextField", "textField"}
 PROPS = ["checked", "disabled", "expanded", "level", "pressed", "selected"]  # Shown as [name] or [name=value].
+# Roles that are clickable by nature, so [cursor=pointer] tells nothing about them.
+INTERACTIVE = {"link", "button", "checkbox", "radio", "switch", "tab", "menuitem", "menuitemcheckbox", "menuitemradio",
+               "option", "combobox", "textbox", "searchbox", "slider", "spinbutton", "treeitem", "DisclosureTriangle",
+               "ListBoxOption", "MenuListOption", "PopUpButton", "ToggleButton"}
 MAX_NAME, MAX_TEXT, MAX_URL = 300, 2000, 300
 REF = re.compile(r"^(f\d+)?e\d+$")
 
@@ -45,10 +50,12 @@ class Frame:
 
     prefix: str  # "" for the main frame, else e.g. "f1".
     nodes: list[dict]
+    # Set by build() from the frame's root: links to its own origin are shown as paths.
     cursors: dict[int, str] = field(default_factory=dict)  # backendNodeId -> computed `cursor`.
     displays: dict[int, str] = field(default_factory=dict)  # backendNodeId -> computed `display`.
     boxes: dict[int, tuple[float, float, float, float]] = field(default_factory=dict)  # backendNodeId -> viewport box.
     children: dict[int, "Frame"] = field(default_factory=dict)  # iframe backendNodeId -> its frame.
+    url: str = ""
 
 
 RefFor = Callable[[str, int], str]
@@ -66,6 +73,9 @@ def build(frame: Frame, ref_for: RefFor, assign: bool = True) -> list[Item | str
     """The top-level items of `frame`'s snapshot, with refs numbered in document order."""
     by_id = {node["nodeId"]: node for node in frame.nodes}
     roots = [node for node in frame.nodes if not node.get("parentId") or node["parentId"] not in by_id]
+    for root in roots:
+        if _value(root, "role") in ("RootWebArea", "WebArea") and (url := _properties(root).get("url")):
+            frame.url = str(url)
     items: list[Item | str] = []
     for root in roots:
         items += _convert(frame, by_id, root, ref_for, parent_cursor="auto", depth=0)
@@ -128,22 +138,27 @@ def _convert(frame: Frame, by_id: dict, node: dict, ref_for: RefFor, parent_curs
         return []
     if role == "paragraph" and not children and not name:
         return []
+    if role == "listitem" and not name and not interesting and len(children) == 1 and isinstance(children[0], Item):
+        return children  # A list entry that is one link or button: the entry itself adds nothing.
+    # A wrapper inside a button or link that only repeats its name.
+    children = [c for c in children if not (isinstance(c, Item) and c.role == "generic" and not c.name and not c.children
+                                            and not c.cursor and c.text == name and name)]
 
     item = Item(role=ROLES.get(role, role[:1].lower() + role[1:] if role[:1].isupper() else role),
-                name=clip(name, MAX_NAME), cursor=clickable)
+                name=clip(name, MAX_NAME), cursor=clickable and role not in INTERACTIVE)
     if backend is not None:
         item.key = (frame.prefix, backend)
         if box := frame.boxes.get(backend):
             item.box = tuple(round(v) for v in box)
     for prop in PROPS:
         value = properties.get(prop)
-        if value is None or value is False or value == "false":
+        if value is None or value is False or value == "false" or (prop == "level" and role != "heading"):
             continue
         item.props.append(prop if value is True or value == "true" else f"{prop}={value}")
     if properties.get("focused") and role not in ("RootWebArea", "WebArea"):
         item.props.append("active")
     if role == "link" and (url := properties.get("url")):
-        item.url = clip(str(url), MAX_URL)
+        item.url = clip(relative(str(url), frame.url), MAX_URL)
     if role in VALUED and (value := squash(_value(node, "value"))):
         item.text = clip(value, MAX_TEXT)
     if role == "combobox" and any(isinstance(c, Item) for c in children):
@@ -157,12 +172,25 @@ def _convert(frame: Frame, by_id: dict, node: dict, ref_for: RefFor, parent_curs
     return [item]
 
 
+def relative(url: str, base: str) -> str:
+    """`url` as a path when it is on `base`'s origin, which is how most of a page's links read shortest."""
+    target, page = urlsplit(url), urlsplit(base)
+    if not page.netloc or (target.scheme, target.netloc) != (page.scheme, page.netloc):
+        return url
+    if (target.path, target.query) == (page.path, page.query) and target.fragment:
+        return "#" + target.fragment
+    return urlunsplit(("", "", target.path or "/", target.query, target.fragment))
+
+
 def _merge(items: list[Item | str]) -> list[Item | str]:
     """Join adjacent text runs, and drop label text that only repeats the name of the field after it."""
     merged: list[Item | str] = []
     for item in items:
         if isinstance(item, str) and merged and isinstance(merged[-1], str):
             merged[-1] = squash(f"{merged[-1]} {item}")
+        elif isinstance(item, Item) and item.role == "img" and not item.children and merged and isinstance(merged[-1], Item) \
+                and (merged[-1].role, merged[-1].name) == ("img", item.name) and not merged[-1].children:
+            continue  # The same picture again, such as a carousel's slides.
         elif item != "":
             merged.append(item)
     return [item for i, item in enumerate(merged)

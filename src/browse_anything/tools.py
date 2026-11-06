@@ -18,7 +18,7 @@ from mcp_types import ImageContent, TextContent, Tool, ToolAnnotations
 
 from .browser import Browser
 from .session import Session, Tab, ToolError
-from .snapshot import find, find_item, render
+from .snapshot import find, find_item, render, walk_items
 
 SNAPSHOT_INLINE = 12_000  # Characters of snapshot shown after an action; more is saved to a file.
 SNAPSHOT_MAX = 50_000  # Characters shown by browser_snapshot.
@@ -148,12 +148,14 @@ class Tools:
             return f"### Snapshot\n```yaml\n{text}\n```"
         path = self.save(text, f"page-{stamp()}.yml")
         if mode == "action":
-            outline = [line.strip() for line in text.splitlines() if line.lstrip().startswith("- heading")][:40]
-            body = f"- [Snapshot]({path}) ({len(text):,} characters, too large to show here). Search it with browser_find, " \
-                   "or read parts with browser_snapshot (`target`, `depth`)."
-            if outline:
-                body += "\n- Headings:\n" + "\n".join(f"  {line}" for line in outline)
-            return "### Snapshot\n" + body
+            # The start of the main content is what a model looks for first: results, an article, a product's offers.
+            main = next((item for item in walk_items(items) if item.role == "main"), None)
+            shown = render([main]) if main else text
+            cut = shown.rfind("\n", 0, limit) if len(shown) > limit else len(shown)
+            where = "the start of its main content" if main else "its start"
+            return f"### Snapshot\nThe snapshot has {len(text):,} characters, so this shows {where}. The full snapshot is in " \
+                   f"{path}: search it with browser_find, or read parts with browser_snapshot (`target`, `depth`).\n" \
+                   f"```yaml\n{shown[:cut]}\n```" + ("\n… (cut off here)" if cut < len(shown) else "")
         cut = text.rfind("\n", 0, limit)
         return f"### Snapshot\n```yaml\n{text[:cut]}\n```\n… (truncated: {len(text):,} characters in all; the full snapshot is in {path}. " \
                "Use browser_find, or `target`/`depth` to read the rest.)"

@@ -23,7 +23,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from typing import Literal
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from . import cloudflare, keys
 from .cdp import CDP, ProtocolError
@@ -51,6 +51,16 @@ WORLD_SCRIPT = f"""(() => {{
     }});
 }})()"""
 COLLECT = "(() => { const errors = window.__errors || []; window.__errors = []; return errors; })()"
+
+# What a failed navigation most likely means, for the errors a model can do something about.
+NET_HINTS = {
+    "net::ERR_NAME_NOT_RESOLVED": " (the domain does not exist; check its spelling)",
+    "net::ERR_CONNECTION_REFUSED": " (nothing is listening there; for a local server, check it is running and the port)",
+    "net::ERR_CONNECTION_TIMED_OUT": " (the server did not answer)",
+    "net::ERR_CERT_COMMON_NAME_INVALID": " (the site's certificate is not for this domain)",
+    "net::ERR_CERT_DATE_INVALID": " (the site's certificate has expired)",
+    "net::ERR_INTERNET_DISCONNECTED": " (no internet connection)",
+}
 
 POLL = 0.25  # Seconds between checks of a challenge's progress.
 RECLICK = 4  # Seconds to let a click verify before clicking a checkbox that is still shown.
@@ -518,9 +528,13 @@ class Tab:
                 await asyncio.sleep(1.5)
 
     async def navigate(self, url: str):
-        if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", url):
+        url = url.strip()
+        if url.startswith(("/", "?", "#")) and self.url.startswith("http"):  # A path, as snapshots show same-site links.
+            url = urljoin(self.url, url)
+        elif not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*:", url):
             url = ("http://" if is_local("http://" + url) else "https://") + url
         await self.set_runtime(self.want_runtime(url))
+        previous, before = self.url, await self.history_index()
         self.loading = True
         downloads = len(self.downloads)
         result = await self.send("Page.navigate", timeout=LOAD_TIMEOUT * 2, url=url)
@@ -530,8 +544,25 @@ class Tab:
                 await self.browser.finish_downloads(self)
                 return
             self.loading = False
-            raise ToolError(f"{error} at {url}")
+            raise ToolError(f"{error} at {url}{NET_HINTS.get(error, '')}{await self.restore(before, previous)}")
         await self.settle_navigation(lazy=False)
+
+    async def history_index(self) -> int | None:
+        with contextlib.suppress(ProtocolError, TimeoutError):
+            return (await self.send("Page.getNavigationHistory", timeout=5))["currentIndex"]
+        return None
+
+    async def restore(self, before: int | None, previous: str) -> str:
+        """After a failed navigation, go back from Chrome's error page so the tab keeps the page it had."""
+        if before is None or previous in ("", "about:blank"):
+            return ""
+        with contextlib.suppress(ProtocolError, TimeoutError, KeyError, IndexError):
+            history = await self.send("Page.getNavigationHistory", timeout=5)
+            if history["currentIndex"] > before:
+                await self.send("Page.navigateToHistoryEntry", entryId=history["entries"][before]["id"])
+                await self.wait_loaded(10)
+            return f". The tab still shows {previous}"
+        return ""
 
     async def settle_navigation(self, lazy: bool, limit: float = 3):
         await self.wait_loaded()
