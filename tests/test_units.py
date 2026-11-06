@@ -278,3 +278,18 @@ def test_invisible_text_and_long_selects():
     assert sum('- option "' in l for l in lines_) == 11  # The first ten and the selected one keep their refs.
     assert 'option "Country 20" [selected]' in text
     assert "- text: '19 more options, chosen by their text with browser_select_option: Country 10, Country 11," in text
+
+
+def test_long_dialogs_are_condensed_in_excerpts():
+    from browse_anything.snapshot import Item
+    from browse_anything.tools import condense, visible
+    legal = "We use cookies for many purposes. " * 40
+    dialog = Item("dialog", "Cookies", "e1", children=[
+        Item("paragraph", ref="e2", text=legal), Item("link", "Cookie notice", "e3"), Item("link", "Cookie notice", "e4"),
+        Item("button", "Accept", "e5"), Item("button", "Decline", "e6")])
+    text = render([condense(dialog)])
+    assert len(text) < 700 and "(shortened" in text
+    assert text.index('button "Accept"') < text.index('link "Cookie notice"') and text.count("Cookie notice") == 1
+    assert not visible(Item("dialog", ref="e9", children=[Item("generic", ref="e10")]))
+    small = Item("dialog", "Error", "e1", children=["Your card was declined.", Item("button", "OK", "e2")])
+    assert condense(small) is small

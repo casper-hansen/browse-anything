@@ -19,12 +19,51 @@ from mcp_types import ImageContent, TextContent, Tool, ToolAnnotations
 
 from .browser import Browser
 from .session import Session, Tab, ToolError
-from .snapshot import find, find_item, find_roles, render, walk_items
+from .snapshot import Item, controls, find, find_item, find_roles, render, walk_items
 
 SNAPSHOT_INLINE = 12_000  # Characters of snapshot shown after an action; more is saved to a file.
 SNAPSHOT_MAX = 50_000  # Characters shown by browser_snapshot.
 RESULT_MAX = 40_000  # Characters of other results shown; more is saved to a file.
 NEW_ERRORS, NEW_LOGS = 3, 5  # Most new page errors, and console output of the page's own code, listed under Events.
+
+
+DIALOG_FULL, DIALOG_TEXT = 1500, 300  # Characters of a dialog shown whole in an excerpt, and of a longer one's text.
+
+
+def visible(dialog: Item) -> bool:
+    """Whether a dialog has anything to read or press; empty ones are leftovers of closed popups."""
+    return bool(dialog.name or dialog.text or any(isinstance(c, str) for c in dialog.children) or controls(dialog, 1)
+                or any(isinstance(c, Item) and (c.name or c.text) for c in walk_items(dialog.children)))
+
+
+def condense(dialog: Item) -> Item:
+    """A long dialog, such as a cookie banner, as the start of its text and its controls: enough to read what it
+    is and dismiss it. The snapshot file has it whole."""
+    if len(render([dialog])) <= DIALOG_FULL:
+        return dialog
+    words = []
+    for entry in [dialog.text or ""] + [c if isinstance(c, str) else c.text or c.name for c in walk_items_and_text(dialog.children)]:
+        if entry:
+            words.append(entry)
+        if sum(map(len, words)) > DIALOG_TEXT:
+            break
+    summary = " ".join(words)
+    summary = summary if len(summary) <= DIALOG_TEXT else summary[:DIALOG_TEXT - 1] + "…"
+    shown, seen = [], set()
+    for c in sorted(controls(dialog, 40), key=lambda c: c.role != "button"):  # Buttons first: they dismiss it.
+        if c.role in ("button", "link", "checkbox", "switch", "tab") and (c.role, c.name) not in seen and len(shown) < 10:
+            seen.add((c.role, c.name))
+            shown.append(c)
+    return Item(role=dialog.role, name=dialog.name, ref=dialog.ref, props=dialog.props,
+                children=[f"{summary} (shortened; the snapshot file has the whole dialog)",
+                          *[Item(role=c.role, name=c.name, ref=c.ref, props=c.props) for c in shown]])
+
+
+def walk_items_and_text(items):
+    for entry in items:
+        yield entry
+        if isinstance(entry, Item):
+            yield from walk_items_and_text(entry.children)
 
 
 def stamp() -> str:
@@ -175,7 +214,7 @@ class Tools:
             # The start of the main content is what a model looks for first: results, an article, a product's offers.
             main = next((item for item in walk_items(items) if item.role == "main"), None)
             # Open dialogs, such as cookie banners, block the page; they are shown even outside the main content.
-            dialogs = find_roles(items, {"dialog", "alertdialog"}, skip=main) if main else []
+            dialogs = [condense(d) for d in find_roles(items, {"dialog", "alertdialog"}, skip=main) if visible(d)] if main else []
             shown = render(dialogs + [main]) if main else text
             cut = shown.rfind("\n", 0, limit) if len(shown) > limit else len(shown)
             where = ("open dialogs and " if dialogs else "") + "the start of its main content" if main else "its start"
