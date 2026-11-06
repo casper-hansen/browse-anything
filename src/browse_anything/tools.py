@@ -51,6 +51,7 @@ class Tools:
                         annotations=ToolAnnotations(title=name.removeprefix("browser_").replace("_", " ").capitalize(),
                                                     read_only_hint=read_only, destructive_hint=False, open_world_hint=True))
             self.specs[name] = (tool, getattr(self, handler), modal_ok)
+        self.listed_tabs = ""  # The tab list as last shown.
 
     def definitions(self) -> list[Tool]:
         return [spec[0] for spec in self.specs.values()]
@@ -119,7 +120,13 @@ class Tools:
                 page.append(f"- Console: {errors} errors, {warnings} warnings")
             sections.append("### Page\n" + "\n".join(page))
         if response.tabs or (tab and len(self.session.tabs) > 1 and response.page):
-            sections.append("### Open tabs\n" + await self.tab_list())
+            listing = await self.tab_list()
+            if response.tabs or listing != self.listed_tabs:
+                sections.append("### Open tabs\n" + listing)
+                self.listed_tabs = listing
+            else:  # Unchanged since the last response: no need to repeat it.
+                current = self.session.tabs.index(self.session.current) if self.session.current in self.session.tabs else 0
+                sections.append(f"### Open tabs\n- {len(self.session.tabs)} tabs, unchanged; the current one is tab {current}")
         if tab and not tab.closed and (modal := self.modal(tab)):
             sections.append(modal)
         elif response.after:
@@ -183,6 +190,7 @@ class Tools:
             title = await tab.title()
             context = f" (context: {tab.context})" if tab.context else ""
             current = "(current) " if tab is self.session.current else ""
+            title = title if len(title) <= 80 else title[:79] + "…"
             rows.append(f"- {index}: {current}[{title}]({tab.url}){context}")
         return "\n".join(rows)
 
