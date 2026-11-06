@@ -234,3 +234,26 @@ def test_unwrap_search_redirects():
     assert unwrap("https://example.com/ck/a?u=a1xyz") == "https://example.com/ck/a?u=a1xyz"
     long = "https://example.com/" + "x" * 1000
     assert unwrap(long) == long  # URLs are never cut off.
+
+
+def test_unwrap_nested_ad_redirects_and_tracking():
+    import base64
+    from urllib.parse import quote
+    from browse_anything.snapshot import unwrap
+    shop = "http://www.proshop.dk/SSD/Samsung-990-Pro/3103447?utm_source=bing&msclkid=ea75&variant=2"
+    bing = "https://www.bing.com/aclick?ld=e8&u=" + base64.b64encode(quote(shop, safe="").encode()).decode()
+    ddg = "https://duckduckgo.com/y.js?ad_domain=proshop.dk&u3=" + quote(bing, safe="") + "&vqd=4-1"
+    assert unwrap(ddg) == "http://www.proshop.dk/SSD/Samsung-990-Pro/3103447?variant=2"  # Ad tracking dropped.
+    plain = "https://shop.example/p?utm_source=newsletter"
+    assert unwrap(plain) == plain  # Only redirect destinations are cleaned.
+
+
+def test_missing_required_argument_is_reported():
+    import asyncio
+    from browse_anything.browser import Browser
+    from browse_anything.session import Session
+    from browse_anything.tools import Tools
+    session = Session()
+    tools = Tools(session, Browser(session))
+    content, error = asyncio.run(tools.call("browser_type", {"text": "x", "target": None}))
+    assert error and "Missing required argument: target" in content[0].text

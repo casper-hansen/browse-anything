@@ -59,8 +59,12 @@ class Tools:
     async def call(self, name: str, args: dict) -> tuple[list, bool]:
         if name not in self.specs:
             return [TextContent(type="text", text=f"### Error\nUnknown tool {name}")], True
-        _, handler, modal_ok = self.specs[name]
+        tool, handler, modal_ok = self.specs[name]
         tab = None
+        args = {key: value for key, value in (args or {}).items() if value is not None}
+        if missing := [key for key in tool.input_schema.get("required", []) if key not in args]:
+            return [TextContent(type="text", text=f"### Error\nMissing required argument{'s' if len(missing) > 1 else ''}: "
+                                                  f"{', '.join(missing)}")], True
         try:
             if name != "browse" and not modal_ok and self.session.current and self.session.cdp and self.session.cdp.alive:
                 tab = self.session.current

@@ -173,7 +173,7 @@ def _convert(frame: Frame, by_id: dict, node: dict, ref_for: RefFor, parent_curs
     return [item]
 
 
-def unwrap(url: str) -> str:
+def unwrap(url: str, depth: int = 0) -> str:
     """The destination of a search engine's redirect link, which is what a reader needs to know; else `url`.
 
     URLs are otherwise shown whole, since a cut-off URL cannot be followed. Inline `data:` URLs are abbreviated.
@@ -181,6 +181,8 @@ def unwrap(url: str) -> str:
     if url.startswith("data:"):
         return url.split(",", 1)[0] + ",…" if len(url) > 100 else url
     try:
+        if url.startswith("/"):  # A redirect link relative to the search engine's own page.
+            return url
         parts = urlsplit(url)
         host, query = parts.netloc.lower(), parse_qs(parts.query)
         if host.endswith("bing.com") and parts.path in ("/ck/a", "/aclick") and (u := query.get("u", [""])[0]):
@@ -190,13 +192,29 @@ def unwrap(url: str) -> str:
             target = (query.get("q") or query.get("url") or [""])[0]
         elif host.endswith("duckduckgo.com") and parts.path == "/l/":
             target = query.get("uddg", [""])[0]
+        elif host.endswith("duckduckgo.com") and parts.path == "/y.js":  # An ad: it wraps the ad network's redirect.
+            target = query.get("u3", [""])[0]
         else:
             return url
     except (ValueError, UnicodeDecodeError):
         return url
     if target.startswith("/"):  # Bing's own pages, such as its shopping results.
         target = urlunsplit((parts.scheme, parts.netloc, "", "", "")) + target
-    return target if re.match(r"https?://", target) else url
+    if not re.match(r"https?://", target):
+        return url
+    return untrack(unwrap(target, depth + 1)) if depth < 3 else target
+
+
+# Click-tracking parameters ads add to their destination; the page is the same without them.
+TRACKING = re.compile(r"^(utm_[a-z]+|msclkid|gclid|gbraid|wbraid|fbclid|dclid|yclid|mc_cid|mc_eid|_hsenc|_hsmi|srsltid)$")
+
+
+def untrack(url: str) -> str:
+    parts = urlsplit(url)
+    if not parts.query:
+        return url
+    kept = [pair for pair in parts.query.split("&") if not TRACKING.match(unquote(pair.split("=", 1)[0]))]
+    return urlunsplit(parts._replace(query="&".join(kept)))
 
 
 def relative(url: str, base: str) -> str:
