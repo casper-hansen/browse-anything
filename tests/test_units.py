@@ -257,3 +257,24 @@ def test_missing_required_argument_is_reported():
     tools = Tools(session, Browser(session))
     content, error = asyncio.run(tools.call("browser_type", {"text": "x", "target": None}))
     assert error and "Missing required argument: target" in content[0].text
+
+
+def test_invisible_text_and_long_selects():
+    countries = [f"Country {i}" for i in range(30)]
+    option_nodes = [node(100 + i, "option", name, backend=100 + i, parent=4,
+                         properties={"selected": True} if i == 20 else None) for i, name in enumerate(countries)]
+    items = page(
+        node(1, "RootWebArea", "", [2, 3], backend=1),
+        node(2, "generic", None, [5], backend=2, parent=1),
+        node(5, "StaticText", "\u00ad", parent=2),  # Only a soft hyphen: nothing to show.
+        node(3, "combobox", "Country", [4], backend=3, parent=1),
+        node(4, "MenuListPopup", None, [100 + i for i in range(30)], ignored=True, parent=3),
+        *option_nodes,
+        displays={2: "block"},
+    )
+    text = render(items)
+    assert "\u00ad" not in text and not text.startswith("- generic")
+    lines_ = text.splitlines()
+    assert sum('- option "' in l for l in lines_) == 11  # The first ten and the selected one keep their refs.
+    assert 'option "Country 20" [selected]' in text
+    assert "- text: '19 more options, chosen by their text with browser_select_option: Country 10, Country 11," in text

@@ -66,8 +66,11 @@ def clip(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
+INVISIBLE = re.compile("[\u00ad\u200b-\u200d\u2060\ufeff]")  # Soft hyphens and zero-width characters.
+
+
 def squash(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip()
+    return re.sub(r"\s+", " ", INVISIBLE.sub("", text)).strip()
 
 
 def build(frame: Frame, ref_for: RefFor, assign: bool = True) -> list[Item | str]:
@@ -164,6 +167,7 @@ def _convert(frame: Frame, by_id: dict, node: dict, ref_for: RefFor, parent_curs
         item.text = clip(value, MAX_TEXT)
     if role == "combobox" and any(isinstance(c, Item) for c in children):
         item.text = None  # A <select>: its listed options mark the chosen one as [selected].
+        children = _fold_options(children)
     if all(isinstance(child, str) for child in children):
         text = clip(" ".join(children), MAX_TEXT)
         if text and text != item.name and item.text is None:
@@ -215,6 +219,20 @@ def untrack(url: str) -> str:
         return url
     kept = [pair for pair in parts.query.split("&") if not TRACKING.match(unquote(pair.split("=", 1)[0]))]
     return urlunsplit(parts._replace(query="&".join(kept)))
+
+
+SHOWN_OPTIONS = 10
+
+
+def _fold_options(children: list[Item | str]) -> list[Item | str]:
+    """A long <select>'s options after the first few, and the chosen ones, as one line of their names. They need no
+    refs: browser_select_option picks an option by its text. A country list becomes a line instead of 250."""
+    options = [c for c in children if isinstance(c, Item) and c.role == "option"]
+    if len(options) <= SHOWN_OPTIONS + 2:
+        return children
+    folded = [o for o in options[SHOWN_OPTIONS:] if "selected" not in o.props]
+    kept = [c for c in children if not (isinstance(c, Item) and c in folded)]
+    return kept + [f"{len(folded)} more options, chosen by their text with browser_select_option: " + ", ".join(o.name for o in folded)]
 
 
 def relative(url: str, base: str) -> str:
