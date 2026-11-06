@@ -21,7 +21,7 @@ from .browser import Browser
 from .session import Session, Tab, ToolError
 from .snapshot import Item, controls, find, find_item, find_roles, render, walk_items
 
-SNAPSHOT_INLINE = 12_000  # Characters of snapshot shown after an action; more is saved to a file.
+SNAPSHOT_INLINE = 9_000  # Characters of snapshot shown after an action; more is saved to a file.
 SNAPSHOT_MAX = 50_000  # Characters shown by browser_snapshot.
 RESULT_MAX = 40_000  # Characters of other results shown; more is saved to a file.
 NEW_ERRORS, NEW_LOGS = 3, 5  # Most new page errors, and console output of the page's own code, listed under Events.
