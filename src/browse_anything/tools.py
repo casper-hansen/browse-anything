@@ -8,6 +8,7 @@ response says where.
 import asyncio
 import base64
 import contextlib
+import dataclasses
 import json
 import re
 import time
@@ -57,6 +58,19 @@ def condense(dialog: Item) -> Item:
     return Item(role=dialog.role, name=dialog.name, ref=dialog.ref, props=dialog.props,
                 children=[f"{summary} (shortened; the snapshot file has the whole dialog)",
                           *[Item(role=c.role, name=c.name, ref=c.ref, props=c.props) for c in shown]])
+
+
+def condense_dialogs(items: list) -> list:
+    """`items` with every long dialog in them condensed, wherever it is in the tree."""
+    out = []
+    for entry in items:
+        if isinstance(entry, Item) and entry.role in ("dialog", "alertdialog"):
+            out.append(condense(entry))
+        elif isinstance(entry, Item) and entry.children:
+            out.append(dataclasses.replace(entry, children=condense_dialogs(entry.children)))
+        else:
+            out.append(entry)
+    return out
 
 
 def walk_items_and_text(items):
@@ -213,9 +227,13 @@ class Tools:
         if mode == "action":
             # The start of the main content is what a model looks for first: results, an article, a product's offers.
             main = next((item for item in walk_items(items) if item.role == "main"), None)
-            # Open dialogs, such as cookie banners, block the page; they are shown even outside the main content.
-            dialogs = [condense(d) for d in find_roles(items, {"dialog", "alertdialog"}, skip=main) if visible(d)] if main else []
-            shown = render(dialogs + [main]) if main else text
+            if main:
+                # Open dialogs, such as cookie banners, block the page; they are shown even outside the main content.
+                dialogs = [condense(d) for d in find_roles(items, {"dialog", "alertdialog"}, skip=main) if visible(d)]
+                shown = render(dialogs + [condense_dialogs([main])[0]])
+            else:  # A page without landmarks: its start, with its dialogs condensed where they are.
+                dialogs = []
+                shown = render(condense_dialogs(items))
             cut = shown.rfind("\n", 0, limit) if len(shown) > limit else len(shown)
             where = ("open dialogs and " if dialogs else "") + "the start of its main content" if main else "its start"
             return f"### Snapshot\nThe snapshot has {len(text):,} characters, so this shows {where}. The full snapshot is in " \

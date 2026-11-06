@@ -293,3 +293,15 @@ def test_long_dialogs_are_condensed_in_excerpts():
     assert not visible(Item("dialog", ref="e9", children=[Item("generic", ref="e10")]))
     small = Item("dialog", "Error", "e1", children=["Your card was declined.", Item("button", "OK", "e2")])
     assert condense(small) is small
+
+
+def test_dialogs_condensed_anywhere_in_the_tree():
+    from browse_anything.snapshot import Item
+    from browse_anything.tools import condense_dialogs
+    legal = "Vi bruger cookies til mange formål. " * 60
+    page_ = [Item("banner", ref="e1", children=[
+        Item("dialog", "Cookies", "e2", children=[Item("paragraph", ref="e3", text=legal), Item("button", "Afvis", "e4")])]),
+        Item("heading", "Shop", "e5")]
+    text = render(condense_dialogs(page_))
+    assert "(shortened" in text and 'button "Afvis" [ref=e4]' in text and 'heading "Shop"' in text
+    assert len(text) < 800
