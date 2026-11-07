@@ -304,6 +304,7 @@ class Tab:
         self.last_quads: list[list[float]] = []  # The viewport quads of the element box() measured last.
         self.url = "about:blank"
         self.status: int | None = None
+        self.statuses: dict[str, int] = {}  # Navigation loaderId -> its document's HTTP status.
         self.loading = False
         self.navigations = 0
         self.inflight: set[str] = set()
@@ -411,6 +412,7 @@ class Tab:
                 entry.response_headers, entry.mime = response.get("headers", {}), response.get("mimeType", "")
             if params.get("type") == "Document" and params.get("frameId") == self.frame and session == self.id:
                 self.status = response.get("status")
+                self.statuses[params.get("loaderId")] = self.status
         elif method in ("Network.loadingFinished", "Network.loadingFailed"):
             self.inflight.discard(params["requestId"])
             if entry := self.by_request.get((session, params["requestId"])):
@@ -419,6 +421,9 @@ class Tab:
                     entry.failed = params.get("errorText", "failed") + (" (blocked)" if params.get("blockedReason") else "")
         elif method == "Page.frameNavigated" and session == self.id and not params["frame"].get("parentId"):
             self.url = params["frame"]["url"]
+            # The status of this page's own load: a page restored from the back/forward cache made no request, and
+            # must not show the status of the page before it.
+            self.status = self.statuses.get(params["frame"].get("loaderId"))
             # A page restored from the back/forward cache made no request; its list starts empty.
             self.network_start = len(self.requests) if params.get("type") == "BackForwardCacheRestore" else \
                 self.loaders.get(params["frame"].get("loaderId"), len(self.requests))
