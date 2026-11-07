@@ -38,6 +38,8 @@
   <div id="target" ondragover="event.preventDefault()" ondrop="event.preventDefault(); document.getElementById('out').textContent = 'dropped ' + event.dataTransfer.getData('text/plain')">Drop target</div>
   <div id="drop" ondragover="event.preventDefault()" ondrop="event.preventDefault(); const f = event.dataTransfer.files; document.getElementById('out').textContent = 'drop ' + (f.length ? f[0].name : event.dataTransfer.getData('text/plain'))">Drop zone</div>
   <div style="width:200px;height:30px;border:1px solid #888" onclick="document.getElementById('out').textContent = 'custom opened'"><input role="combobox" aria-label="Custom select" style="width:0;height:0;padding:0;border:0"></div>
+  <div style="position:relative;height:80px"><button id="under" onclick="document.getElementById('out').textContent = 'under clicked'">Under popover</button>
+    <div id="popover" style="position:absolute;top:0;left:0;width:320px;height:70px;background:#eee"><ul style="margin:0"><li><a href="/second.html">Sign in</a></li></ul><button aria-label="Close welcome" onclick="this.parentNode.remove()">×</button></div></div>
   <my-widget></my-widget>
   <iframe id="same" srcdoc="<button onclick=&quot;parent.document.getElementById('out').textContent='inner clicked'&quot;>Inner button</button>" width="300" height="60"></iframe>
   <div class="tall"></div>

@@ -724,38 +724,50 @@ class Tab:
         raise ToolError(f"{covering} intercepts pointer events at the element.{await self.cover_hint(px, py)}")
 
     async def cover_hint(self, x: float, y: float) -> str:
-        """Where the element covering (x, y) is in the snapshot, and the controls that may dismiss it."""
+        """What covers (x, y), as the snapshot shows it, and the controls in it that may dismiss it."""
         fallback = " Dismiss it first, for example with its close button or Escape."
         try:
-            context = await self.world()
-            chain = await self.send("Runtime.evaluate", contextId=context, returnByValue=False, expression=f"""(() => {{
-                const out = [];
-                for (let n = document.elementFromPoint({x}, {y}); n && n !== document.body && out.length < 25; n = n.parentElement) out.push(n);
-                return out;
-            }})()""")
-            properties = (await self.send("Runtime.getProperties", objectId=chain["result"]["objectId"], ownProperties=True))["result"]
-            ancestors = [p["value"]["objectId"] for p in sorted((p for p in properties if p["name"].isdigit()), key=lambda p: int(p["name"]))]
             if not self.items:
                 await self.snapshot()
-            chosen = None
-            for object_id in ancestors:
-                backend = (await self.send("DOM.describeNode", objectId=object_id))["node"]["backendNodeId"]
-                ref = self.ref_ids.get(("", backend))
-                item = find_item(self.items, ref) if ref else None
-                if item is None:
+            context = await self.world()
+            # The covering element's ancestors, then the controls of the overlay it belongs to: its nearest positioned
+            # ancestor of some size, such as a popover's or a banner's box, which often has no role of its own.
+            found = await self.send("Runtime.evaluate", contextId=context, returnByValue=False, expression=f"""(() => {{
+                const hit = document.elementFromPoint({x}, {y});
+                const ancestors = [];
+                let overlay = null;
+                for (let n = hit; n && n !== document.body && ancestors.length < 25; n = n.parentElement) {{
+                    ancestors.push(n);
+                    const r = n.getBoundingClientRect(), position = getComputedStyle(n).position;
+                    if (!overlay && ['fixed', 'absolute', 'sticky'].includes(position) && r.width >= 100 && r.height >= 40) overlay = n;
+                }}
+                const shown = e => {{ const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== 'hidden'; }};
+                const controls = overlay ? [...overlay.querySelectorAll('button, a[href], [role=button], [role=link], input[type=button], input[type=submit]')].filter(shown) : [];
+                controls.sort((a, b) => (b.matches('button, [role=button], input') ? 1 : 0) - (a.matches('button, [role=button], input') ? 1 : 0));
+                return {{ancestors, controls: controls.slice(0, 10), overlay: overlay ? [overlay] : []}};
+            }})()""")
+            groups = {}
+            for group in (await self.send("Runtime.getProperties", objectId=found["result"]["objectId"], ownProperties=True))["result"]:
+                if "objectId" not in group.get("value", {}):
                     continue
-                if item.role in ("dialog", "alertdialog"):
-                    chosen = item
-                    break
-                if chosen is None and controls(item):
-                    chosen = item
+                entries = (await self.send("Runtime.getProperties", objectId=group["value"]["objectId"], ownProperties=True))["result"]
+                ids = [e["value"]["objectId"] for e in sorted((e for e in entries if e["name"].isdigit()), key=lambda e: int(e["name"]))]
+                groups[group["name"]] = [self.ref_ids.get(("", (await self.send("DOM.describeNode", objectId=i))["node"]["backendNodeId"]))
+                                         for i in ids]
         except (ProtocolError, TimeoutError, KeyError):
             return fallback
-        if chosen is None:
-            return fallback
-        listed = ", ".join(f'{c.role} "{c.name}" [ref={c.ref}]' if c.name else f"{c.role} [ref={c.ref}]" for c in controls(chosen))
-        where = f'{chosen.role}{f" {chosen.name!r}" if chosen.name else ""} [ref={chosen.ref}]'
-        return f" It is part of {where}" + (f", whose controls are: {listed}." if listed else ".") + " Dismiss it first."
+        items = lambda refs: [item for ref in refs if ref and (item := find_item(self.items, ref))]
+        describe = lambda c: f'{c.role} "{c.name}" [ref={c.ref}]' if c.name else f"{c.role} [ref={c.ref}]"
+        # A dialog the cover is part of says it best; else the overlay's own controls.
+        dialog = next((item for item in items(groups.get("ancestors", [])) if item.role in ("dialog", "alertdialog")), None)
+        if dialog:
+            listed = ", ".join(describe(c) for c in controls(dialog))
+            where = f'{dialog.role}{f" {dialog.name!r}" if dialog.name else ""} [ref={dialog.ref}]'
+            return f" It is part of {where}" + (f", whose controls are: {listed}." if listed else ".") + " Dismiss it first."
+        listed = ", ".join(describe(c) for c in items(groups.get("controls", [])))
+        if listed:
+            return f" It is part of an overlay whose controls are: {listed}. Close or dismiss it first."
+        return fallback
 
     async def covering(self, element: Element, x: float, y: float) -> str | None:
         """What covers `element` at (x, y), or None when a click there reaches it."""

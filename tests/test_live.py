@@ -88,6 +88,12 @@ async def test_playground(site, tmp_path):
 
         after, _, _ = await call("browser_click", target=ref(text, 'combobox "Custom select"'))  # A 0x0 input.
         assert "custom opened" in after and "enclosing control was clicked" in after
+        # A popover without a role covers a button: the error leads with its close button.
+        after, _, error = await call("browser_click", target=ref(text, 'button "Under popover"'))
+        assert error and re.search(r'overlay whose controls are: button "Close welcome" \[ref=\w+\], link "Sign in"', after)
+        await call("browser_click", target=ref(text, 'button "Close welcome"'))
+        after, _, _ = await call("browser_click", target=ref(text, 'button "Under popover"'))
+        assert "under clicked" in after
         after, _, _ = await call("browser_click", target=ref(text, 'button "Shadow button"'))
         assert "shadow clicked" in after
         after, _, _ = await call("browser_click", target=ref(text, 'button "Inner button"'))
