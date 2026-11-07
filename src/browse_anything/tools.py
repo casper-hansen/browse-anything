@@ -104,7 +104,7 @@ class Tools:
                         annotations=ToolAnnotations(title=name.removeprefix("browser_").replace("_", " ").capitalize(),
                                                     read_only_hint=read_only, destructive_hint=False, open_world_hint=True))
             self.specs[name] = (tool, getattr(self, handler), modal_ok)
-        self.listed_tabs = ""  # The tab list as last shown.
+        self.listed_tabs: tuple = ()  # The tabs and current tab when the list was last shown.
         self.notes: list[str] = []  # Events to report with the next response that has a page.
 
     def definitions(self) -> list[Tool]:
@@ -184,10 +184,11 @@ class Tools:
                 page.append(f"- Console: {errors} errors, {warnings} warnings")
             sections.append("### Page\n" + "\n".join(page))
         if response.tabs or (tab and len(self.session.tabs) > 1 and response.page):
-            listing = await self.tab_list()
-            if response.tabs or listing != self.listed_tabs:
-                sections.append("### Open tabs\n" + listing)
-                self.listed_tabs = listing
+            # Repeated when tabs open, close or switch; the current tab's own page is in the Page section.
+            shape = (tuple(map(id, self.session.tabs)), id(self.session.current))
+            if response.tabs or shape != self.listed_tabs:
+                sections.append("### Open tabs\n" + await self.tab_list())
+                self.listed_tabs = shape
             else:  # Unchanged since the last response: no need to repeat it.
                 current = self.session.tabs.index(self.session.current) if self.session.current in self.session.tabs else 0
                 sections.append(f"### Open tabs\n- {len(self.session.tabs)} tabs, unchanged; the current one is tab {current}")
