@@ -281,6 +281,7 @@ class Tab:
         self.ready = asyncio.Event()
         self.closed = False
         self.used = time.monotonic()  # When a tool last acted on this tab.
+        self.last_quads: list[list[float]] = []  # The viewport quads of the element box() measured last.
         self.url = "about:blank"
         self.status: int | None = None
         self.loading = False
@@ -712,6 +713,7 @@ class Tab:
         quads = [q for q in quads if abs((q[2] - q[0]) * (q[5] - q[1])) > 0.5 or abs((q[4] - q[0]) * (q[5] - q[1])) > 0.5]
         if not quads:
             raise ToolError("The element is not visible (it has no size)")
+        self.last_quads = [[v + offset[i % 2] for i, v in enumerate(q)] for q in quads]
         xs = [v for q in quads for v in q[0::2]]
         ys = [v for q in quads for v in q[1::2]]
         x, y = min(xs), min(ys)
@@ -724,9 +726,19 @@ class Tab:
             px, py = x + w / 2, y + h / 2
             if not check or element.session != self.id or element.frame:
                 return px, py
-            covering = await self.covering(element, px, py)
-            if covering is None:
-                return px, py
+            # The middle of the bounding box can miss an element that is not a rectangle, such as a search result's
+            # link around a title and a URL line: it may fall between them, on a thumbnail or a "Translate" link.
+            # So the middles of the element's own boxes are tried too, largest first, as a person clicks the text.
+            candidates = [(px, py)]
+            viewport_w, viewport_h = self.browser.config.width, self.browser.config.height
+            for quad in sorted(self.last_quads, key=lambda q: -abs((q[2] - q[0]) * (q[5] - q[1]))):
+                qx, qy = sum(quad[0::2]) / 4, sum(quad[1::2]) / 4
+                if 0 <= qx < viewport_w and 0 <= qy < viewport_h and all(abs(qx - cx) + abs(qy - cy) > 2 for cx, cy in candidates):
+                    candidates.append((qx, qy))
+            for cx, cy in candidates[:6]:
+                covering = await self.covering(element, cx, cy)
+                if covering is None:
+                    return cx, cy
             await asyncio.sleep(0.25)
         raise ToolError(f"{covering} intercepts pointer events at the element.{await self.cover_hint(px, py)}")
 
