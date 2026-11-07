@@ -327,6 +327,8 @@ class Tab:
         ]
         if not self.hidden:
             sent.append(post("Page.setInterceptFileChooserDialog", enabled=True))
+        if hints := getattr(self.cdp, "client_hints", None):
+            sent.append(post("Emulation.setUserAgentOverride", userAgent=self.cdp.user_agent, userAgentMetadata=hints))
         if self.browser.config.console == "full":
             self.runtime = True
             sent.append(post("Runtime.enable"))
@@ -336,6 +338,8 @@ class Tab:
         post = lambda method, **params: self.cdp.post(method, session, **params)
         sent = [post("Page.enable"), post("Network.enable"),
                 post("Target.setAutoAttach", autoAttach=True, waitForDebuggerOnStart=False, flatten=True)]
+        if hints := getattr(self.cdp, "client_hints", None):  # Out-of-process iframes send their own hints.
+            sent.append(post("Emulation.setUserAgentOverride", userAgent=self.cdp.user_agent, userAgentMetadata=hints))
         if not self.hidden:
             sent.append(post("Page.setInterceptFileChooserDialog", enabled=True))
         await asyncio.wait_for(asyncio.gather(*sent, return_exceptions=True), 30)

@@ -352,3 +352,13 @@ def test_filter_facets_collapse_to_their_controls():
         "  - /url: /?c=new",
         '- checkbox "Refurbished 0" [disabled] [ref=e2]',  # The text after it only repeated its name.
     ])
+
+
+def test_brand_list_matches_chrome():
+    from browse_anything.chrome import brands
+    header = lambda major: ", ".join(f'"{b["brand"]}";v="{b["version"]}"' for b in brands(major, str(major)))
+    # Sec-CH-UA as Google Chrome sends it; 157's GREASE brand is what Chrome for Testing 157 itself reports.
+    assert header(120) == '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"'
+    assert header(131) == '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"'
+    assert header(157) == '"Not-A.Brand";v="99", "Google Chrome";v="157", "Chromium";v="157"'
+    assert brands(157, "157.0.8103.15")[0]["version"] == "99.0.0.0"
