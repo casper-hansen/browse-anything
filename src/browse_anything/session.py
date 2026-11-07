@@ -641,10 +641,13 @@ class Tab:
     # Targets.
 
     def ref_for(self, prefix: str, backend: int) -> str:
+        """An element's ref. One numbering spans all frames, and refs carry no frame prefix: with per-frame
+        numbering, `f4e27` (a consent banner's button) and `e27` (the page's search box) both existed, and a model
+        that dropped the prefix clicked the wrong one. The ref's frame is recorded in `refs` instead."""
         key = (prefix, backend)
         if key not in self.ref_ids:
-            counter = self.ref_counters.setdefault(prefix, itertools.count(1))
-            self.ref_ids[key] = f"{prefix}e{next(counter)}"
+            counter = self.ref_counters.setdefault("", itertools.count(1))
+            self.ref_ids[key] = f"e{next(counter)}"
         return self.ref_ids[key]
 
     async def resolve(self, target: str) -> Element:

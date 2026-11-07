@@ -26,7 +26,7 @@ Chrome always runs in the same sandbox as [DSH's local sandbox](https://github.c
 | Tool | |
 | --- | --- |
 | `browser_navigate`, `browser_navigate_back` | Load a page, past any challenge, and return its snapshot |
-| `browser_snapshot`, `browser_find` | The page's accessibility tree with refs (`e12`, `f1e3` inside iframe `f1`), or a search of it |
+| `browser_snapshot`, `browser_find` | The page's accessibility tree with refs (`e12`, numbered across iframes too), or a search of it |
 | `browser_click`, `browser_hover`, `browser_drag`, `browser_type`, `browser_press_key`, `browser_select_option`, `browser_fill_form` | Act on elements by ref or selector |
 | `browser_drop`, `browser_file_upload` | Drop files or data on an element; answer a file chooser |
 | `browser_mouse_click_xy`, `browser_mouse_move_xy`, `browser_mouse_drag_xy`, `browser_mouse_wheel` | Act at viewport coordinates, for canvases and image grids |

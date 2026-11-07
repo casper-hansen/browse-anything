@@ -1,6 +1,7 @@
 """An ARIA snapshot of a page in Playwright's YAML format, built from Chrome's accessibility tree.
 
-Each element gets a ref (`e12`, or `f1e12` in iframe `f1`) that tools resolve back to its DOM node. Compared with
+Each element gets a ref (`e12`) that tools resolve back to its DOM node, in whichever frame it is: refs are numbered
+across frames, so no two look alike. Compared with
 Playwright's snapshot, unnamed wrapper `generic`s that are neither clickable nor focusable are left out and their
 children hoisted, inline formatting (`strong`, `emphasis`, ...) is merged into the surrounding text, and decorative
 nodes are dropped, so snapshots are a fraction of the size with the same refs to act on.

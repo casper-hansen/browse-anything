@@ -35,13 +35,12 @@ def node(id, role, name=None, children=(), backend=None, ignored=False, properti
 
 
 def refs():
-    """Like `Tab.ref_for`: a counter per frame, and the same ref for the same element."""
-    seen, counters = {}, {}
+    """Like `Tab.ref_for`: one numbering across frames, and the same ref for the same element."""
+    seen = {}
 
     def ref_for(prefix, backend):
         if (prefix, backend) not in seen:
-            counters[prefix] = counters.get(prefix, 0) + 1
-            seen[(prefix, backend)] = f"{prefix}e{counters[prefix]}"
+            seen[(prefix, backend)] = f"e{len(seen) + 1}"
         return seen[(prefix, backend)]
 
     return ref_for
@@ -107,7 +106,7 @@ def test_snapshot_clickable_generic_and_iframes():
     assert render(items) == "\n".join([
         "- generic [ref=e1] [cursor=pointer]: Card",
         "- iframe [ref=e2]:",
-        '  - button "Inner" [ref=f1e1]',
+        '  - button "Inner" [ref=e3]',  # Refs inside frames are numbered with the page's, without a frame prefix.
     ])
 
 
