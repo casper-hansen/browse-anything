@@ -334,3 +334,21 @@ def test_idle_tabs_are_closed(monkeypatch):
         assert await session.expire_idle() == 0
 
     asyncio.run(run())
+
+
+def test_filter_facets_collapse_to_their_controls():
+    items = page(
+        node(1, "RootWebArea", "", [2, 7, 8], backend=1, properties={"url": "https://shop.example/"}),
+        node(2, "LabelText", None, [3], backend=2, parent=1),
+        node(3, "link", "Nieuw 65", [4, 5], backend=3, properties={"url": "https://shop.example/?c=new"}, parent=2),
+        node(4, "checkbox", "Nieuw 65", backend=4, properties={"checked": "true"}, parent=3),
+        node(5, "StaticText", "Nieuw 65", parent=3),
+        node(7, "checkbox", "Refurbished 0", backend=7, properties={"disabled": True}, parent=1),
+        node(8, "StaticText", "Refurbished 0", parent=1),
+        cursors={2: "pointer", 3: "pointer"},
+    )
+    assert render(items) == "\n".join([
+        '- checkbox "Nieuw 65" [checked] [ref=e1]:',  # Label, link and repeated text are one control.
+        "  - /url: /?c=new",
+        '- checkbox "Refurbished 0" [disabled] [ref=e2]',  # The text after it only repeated its name.
+    ])

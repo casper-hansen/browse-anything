@@ -22,6 +22,7 @@ ROLES = {"image": "img", "Iframe": "iframe", "IframePresentational": "iframe", "
          "DescriptionList": "list", "DescriptionListTerm": "term", "DescriptionListDetail": "definition",
          "Figcaption": "caption", "Video": "video", "Audio": "audio", "Details": "group", "DisclosureTriangle": "button",
          "PdfRoot": "document", "RootWebArea": "document", "WebArea": "document", "Code": "code"}
+TOGGLES = {"checkbox", "radio", "switch", "menuitemcheckbox", "menuitemradio"}
 VALUED = {"textbox", "searchbox", "combobox", "spinbutton", "slider", "TextField", "textField"}
 PROPS = ["checked", "disabled", "expanded", "level", "pressed", "selected"]  # Shown as [name] or [name=value].
 # Roles that are clickable by nature, so [cursor=pointer] tells nothing about them.
@@ -145,6 +146,19 @@ def _convert(frame: Frame, by_id: dict, node: dict, ref_for: RefFor, parent_curs
         return []
     if role == "listitem" and not name and not interesting and len(children) == 1 and isinstance(children[0], Item):
         return children  # A list entry that is one link or button: the entry itself adds nothing.
+    # Text that repeats the element's own name, as a filter link's "Nieuw 65" around its checkbox "Nieuw 65".
+    if name:
+        children = [c for c in children if c != name]
+    only = children[0] if len(children) == 1 and isinstance(children[0], Item) else None
+    # A clickable label or <div> around a single control: clicking it is clicking the control.
+    if only and not name and role in HOIST and only.role in INTERACTIVE:
+        only.cursor = False
+        return children
+    # A link or label that only wraps a control of the same name: the control, which shows its state, with the URL.
+    if only and name and only.name == name and only.role in TOGGLES and role in ("link", "LabelText", "generic"):
+        if role == "link" and (url := properties.get("url")):
+            only.url = only.url or relative(unwrap(str(url)), frame.url)
+        return children
     # A wrapper inside a button or link that only repeats its name.
     children = [c for c in children if not (isinstance(c, Item) and c.role == "generic" and not c.name and not c.children
                                             and not c.cursor and c.text == name and name)]
@@ -247,7 +261,7 @@ def relative(url: str, base: str) -> str:
 
 
 def _merge(items: list[Item | str]) -> list[Item | str]:
-    """Join adjacent text runs, and drop label text that only repeats the name of the field after it."""
+    """Join adjacent text runs, and drop label text that only repeats the name of the field next to it."""
     merged: list[Item | str] = []
     for item in items:
         if isinstance(item, str) and merged and isinstance(merged[-1], str):
@@ -257,8 +271,9 @@ def _merge(items: list[Item | str]) -> list[Item | str]:
             continue  # The same picture again, such as a carousel's slides.
         elif item != "":
             merged.append(item)
+    named = lambda i: 0 <= i < len(merged) and isinstance(merged[i], Item) and merged[i].name
     return [item for i, item in enumerate(merged)
-            if not (isinstance(item, str) and i + 1 < len(merged) and isinstance(merged[i + 1], Item) and merged[i + 1].name == item)]
+            if not (isinstance(item, str) and (named(i + 1) == item or named(i - 1) == item))]
 
 
 _PLAIN = re.compile(r"^[^\s\-?:,\[\]{}#&*!|>'\"%@`]([^:#]|:(?!\s)|#(?<!\s#))*$")
