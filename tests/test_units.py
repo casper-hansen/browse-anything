@@ -311,8 +311,8 @@ def test_idle_tabs_are_closed(monkeypatch):
     from browse_anything.session import Config, Session
 
     class FakeTab:
-        def __init__(self, used):
-            self.used, self.lock = used, asyncio.Lock()
+        def __init__(self, used, caller=""):
+            self.used, self.lock, self.caller = used, asyncio.Lock(), caller
 
     async def run():
         session = Session(Config(tab_idle_minutes=1))
@@ -321,17 +321,48 @@ def test_idle_tabs_are_closed(monkeypatch):
 
         async def close_tab(tab):
             closed.append(tab)
-            session.tabs.remove(tab)
+            session.all_tabs.remove(tab)
 
         session.close_tab = close_tab
         import time
-        old, fresh = FakeTab(time.monotonic() - 120), FakeTab(time.monotonic())
-        session.tabs = [old, fresh]
-        assert await session.expire_idle() == 1 and closed == [old] and session.tabs == [fresh]
+        # Idle tabs close whoever they belong to.
+        old, fresh = FakeTab(time.monotonic() - 120, "other session"), FakeTab(time.monotonic())
+        session.all_tabs = [old, fresh]
+        assert await session.expire_idle() == [old] and closed == [old] and session.tabs == [fresh]
         session.config.tab_idle_minutes = 0
         old.used = time.monotonic() - 10_000
-        session.tabs = [old]
-        assert await session.expire_idle() == 0
+        session.all_tabs = [old]
+        assert await session.expire_idle() == []
+
+    asyncio.run(run())
+
+
+def test_each_caller_has_its_own_tabs():
+    import asyncio
+    from browse_anything.session import CALLER, Config, Session
+
+    class FakeTab:
+        def __init__(self, name, caller):
+            self.name, self.caller, self.id, self.target, self.parents = name, caller, name, name, {}
+            self.closed = False
+
+    async def run():
+        session = Session(Config())
+        mine, theirs, mine2 = FakeTab("a", "me"), FakeTab("b", "them"), FakeTab("c", "me")
+        session.all_tabs = [mine, theirs, mine2]
+        session.owners = {t.id: t for t in session.all_tabs}
+        CALLER.set("me")
+        session.current = mine
+        CALLER.set("them")
+        assert session.tabs == [theirs] and session.current is None
+        session.current = theirs
+        CALLER.set("me")
+        assert session.tabs == [mine, mine2] and session.current is mine
+        # A closed tab hands "current" to the same caller's next tab, never to another caller's.
+        session.detach("a", None)
+        assert session.current is mine2 and session.currents["them"] is theirs
+        session.detach("c", None)
+        assert session.current is None and session.tabs == [] and session.currents["them"] is theirs
 
     asyncio.run(run())
 

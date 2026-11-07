@@ -45,6 +45,7 @@ Responses use Playwright MCP's sections (`### Result`, `### Page`, `### Snapshot
 - **Large snapshots go to a file.** After an action, a snapshot over 9,000 characters is saved to a file. The response shows the start of the page's main content, after any open dialogs; a long dialog, such as a cookie banner, is cut down to the start of its text and its buttons. The model can then search the file with `browser_find`, which shows its matches as one tree, or read parts with `browser_snapshot`'s `target` and `depth`. Other large results are saved the same way.
 - **Output is kept short.** Same-site links show as paths. Search engines' redirect links (Bing, Google, DuckDuckGo) show where they lead, without ad tracking. Long native dropdowns list their first options with refs and the rest by name. Chrome's own console warnings are counted rather than listed, and the tab list is repeated only when it changes.
 - **Covered elements are reported.** A click on an element that something covers, such as a cookie banner, fails and names the cover, with the controls that may dismiss it. An element with no size, such as a custom dropdown's hidden input, is clicked through its enclosing control.
+- **Each DSH session has its own tabs.** One server and one Chrome serve every session, so the DSH plugin adds the calling session's id to each call (as `_dsh_session`, which the server removes). Each session, subagents included, then has its own tab list and current tab, and `browser_close` closes only its tabs; two agents browsing at once no longer steer each other's page. Cookies are shared. Calls that don't say which session they're from, such as from other MCP clients, share one tab list as before.
 - **New tabs are followed.** When an action opens a tab, such as a link with `target=_blank`, the response switches to it.
 - **Turnstile widgets are seen through.** A Turnstile widget in a page, on a login form or a gate like Bing's "One last step", is clicked if it asks and given time to pass.
 - **Actions wait for what they start.** After an action, the response waits for the navigation it caused (passing any challenge), for the network to go quiet, and for downloads to finish. Downloads are saved to the output directory.
@@ -69,7 +70,7 @@ Chrome or Chromium must be installed. Playwright's Chromium (`npx playwright ins
 | `BROWSE_ANYTHING_OUTPUT_DIR` | `<tmp>/browse-anything` | Screenshots, downloads, and large output |
 | `BROWSE_ANYTHING_CONSOLE` | `auto` | `auto`, `stealth` or `full` (see above) |
 | `BROWSE_ANYTHING_VIEWPORT` | `1280x720` | Viewport of new tabs |
-| `BROWSE_ANYTHING_TAB_IDLE_MINUTES` | `60` | Close tabs no tool has used for this long; `0` keeps them. One server serves every DSH session, and MCP does not say which session a call is from, so this keeps a new task from starting among an old one's tabs |
+| `BROWSE_ANYTHING_TAB_IDLE_MINUTES` | `60` | Close tabs no tool has used for this long; `0` keeps them |
 
 Files for `browser_file_upload` and `browser_drop` are copied into Chrome's profile first. Chrome cannot read them where they are when they are in `/tmp`, because the Linux sandbox gives Chrome its own empty `/tmp`.
 

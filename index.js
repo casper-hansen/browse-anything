@@ -12,6 +12,8 @@ import { homedir } from 'node:os'
 import { delimiter, dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { sessionScopedTools } from './session-scope.js'
+
 /**
  * A peer dependency: from this package's own resolution when it is installed into a profile, else (a checkout that
  * is linked or inserted by path has no node_modules of its own) from the running DSH's.
@@ -68,7 +70,16 @@ export async function apply(ctx, config) {
   // 60-second connection timeout. `--inexact` keeps dev packages a checkout already has.
   await run(uv, ['sync', '--frozen', '--no-dev', '--inexact', '--project', PROJECT], config.syncTimeoutMs, abort.signal)
 
-  await ctx.plugin(mcpClient, {
+  // DSH's MCP client, with a tool registry that adds the calling session to each call (see session-scope.js).
+  const sessionScopedClient = {
+    name: mcpClient.name,
+    inject: mcpClient.inject,
+    Config: mcpClient.Config,
+    async apply(inner, options) {
+      return mcpClient.apply(inner.extend({ tools: sessionScopedTools(inner.tools) }), options)
+    },
+  }
+  await ctx.plugin(sessionScopedClient, {
     transport: 'stdio',
     serverName: config.serverName,
     command: uv,

@@ -19,11 +19,13 @@ from .markdown import to_markdown
 from mcp_types import ImageContent, TextContent, Tool, ToolAnnotations
 
 from .browser import Browser
-from .session import Session, Tab, ToolError
+from .session import CALLER, Session, Tab, ToolError
 from .snapshot import Item, controls, find, find_item, find_roles, render, walk_items
 
 SNAPSHOT_INLINE = 9_000  # Characters of snapshot shown after an action; more is saved to a file.
 SNAPSHOT_MAX = 50_000  # Characters shown by browser_snapshot.
+# The argument DSH's plugin adds to every call to say which session it is from; see CALLER.
+CALLER_ARGUMENT = "_dsh_session"
 MAIN_MIN = 500  # A main landmark smaller than this, on a page too big to show, is not where its content is.
 RESULT_MAX = 40_000  # Characters of other results shown; more is saved to a file.
 NEW_ERRORS, NEW_LOGS = 3, 5  # Most new page errors, and console output of the page's own code, listed under Events.
@@ -105,8 +107,8 @@ class Tools:
                         annotations=ToolAnnotations(title=name.removeprefix("browser_").replace("_", " ").capitalize(),
                                                     read_only_hint=read_only, destructive_hint=False, open_world_hint=True))
             self.specs[name] = (tool, getattr(self, handler), modal_ok)
-        self.listed_tabs: tuple = ()  # The tabs and current tab when the list was last shown.
-        self.notes: list[str] = []  # Events to report with the next response that has a page.
+        self.listed_tabs: dict[str, tuple] = {}  # Caller -> its tabs and current tab when its list was last shown.
+        self.notes: dict[str, list[str]] = {}  # Caller -> events to report with its next response that has a page.
 
     def definitions(self) -> list[Tool]:
         return [spec[0] for spec in self.specs.values()]
@@ -117,14 +119,21 @@ class Tools:
         tool, handler, modal_ok = self.specs[name]
         tab = None
         args = {key: value for key, value in (args or {}).items() if value is not None}
+        # Each call runs in its own task, so this sets the caller for this call only.
+        caller = str(args.pop(CALLER_ARGUMENT, "") or "")
+        CALLER.set(caller)
+        self.session.last_caller = caller
         if missing := [key for key in tool.input_schema.get("required", []) if key not in args]:
             return [TextContent(type="text", text=f"### Error\nMissing required argument{'s' if len(missing) > 1 else ''}: "
                                                   f"{', '.join(missing)}")], True
         try:
             if name != "browse":
-                if expired := await self.session.expire_idle():
-                    self.notes.append(f"Closed {expired} tab{'s' if expired > 1 else ''} no one had used for over "
-                                      f"{self.session.config.tab_idle_minutes:g} minutes")
+                expired_tabs = await self.session.expire_idle()
+                for owner in {t.caller for t in expired_tabs}:  # Told to the callers whose tabs they were.
+                    expired = sum(t.caller == owner for t in expired_tabs)
+                    self.notes.setdefault(owner, []).append(
+                        f"Closed {expired} tab{'s' if expired > 1 else ''} no one had used for over "
+                        f"{self.session.config.tab_idle_minutes:g} minutes")
             if name != "browse" and not modal_ok and self.session.current and self.session.cdp and self.session.cdp.alive:
                 tab = self.session.current
                 if tab.dialog or tab.chooser:
@@ -187,9 +196,9 @@ class Tools:
         if response.tabs or (tab and len(self.session.tabs) > 1 and response.page):
             # Repeated when tabs open, close or switch; the current tab's own page is in the Page section.
             shape = (tuple(map(id, self.session.tabs)), id(self.session.current))
-            if response.tabs or shape != self.listed_tabs:
+            if response.tabs or shape != self.listed_tabs.get(CALLER.get()):
                 sections.append("### Open tabs\n" + await self.tab_list())
-                self.listed_tabs = shape
+                self.listed_tabs[CALLER.get()] = shape
             else:  # Unchanged since the last response: no need to repeat it.
                 current = self.session.tabs.index(self.session.current) if self.session.current in self.session.tabs else 0
                 sections.append(f"### Open tabs\n- {len(self.session.tabs)} tabs, unchanged; the current one is tab {current}")
@@ -200,8 +209,8 @@ class Tools:
         elif tab and not tab.closed and response.snapshot:
             sections.append(await self.snapshot_section(tab, response.snapshot))
         if tab and not tab.closed:
-            events = self.notes + list(tab.events)
-            self.notes, tab.events = [], []
+            events = self.notes.pop(CALLER.get(), []) + list(tab.events)
+            tab.events = []
             if fresh := tab.new_messages():
                 events.append(self.console_events(fresh, tab))
             if events:

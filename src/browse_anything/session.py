@@ -9,6 +9,7 @@ everywhere, if configured).
 import asyncio
 import base64
 import contextlib
+import contextvars
 import fcntl
 import ipaddress
 import itertools
@@ -29,6 +30,11 @@ from . import cloudflare, keys
 from .cdp import CDP, ProtocolError
 from .chrome import launch
 from .snapshot import REF, Frame, Item, build, controls, find_item, walk_items
+
+# Who a tool call is for. One server serves every session of an MCP client such as DSH, which says which session each
+# call comes from; each caller gets its own tabs and current tab, so two agents browsing at once cannot steer each
+# other's page. Calls that do not say share the "" caller.
+CALLER: contextvars.ContextVar[str] = contextvars.ContextVar("caller", default="")
 
 WORLD = "__browse_anything__"
 RELAY = "browse-anything-" + secrets.token_hex(8)  # The DOM event name main-world errors are relayed under.
@@ -297,6 +303,7 @@ class Tab:
         self.browser, self.cdp = browser, browser.cdp
         self.target, self.id, self.frame = target, session, target  # A tab's main frame has its target's id.
         self.context, self.opener, self.hidden = context, opener, hidden
+        self.caller = ""  # The caller whose tab this is (see CALLER).
         self.lock = asyncio.Lock()
         self.ready = asyncio.Event()
         self.closed = False
@@ -1304,8 +1311,9 @@ class Session:
         self.config = config or Config()
         self.cdp: CDP | None = None
         self.start_lock = asyncio.Lock()
-        self.tabs: list[Tab] = []  # The model's tabs, in order.
-        self.current: Tab | None = None
+        self.all_tabs: list[Tab] = []  # Every caller's tabs, in order.
+        self.currents: dict[str, Tab] = {}  # Caller -> its current tab.
+        self.last_caller = ""  # The caller of the latest tool call, for events no tab claims.
         self.targets: dict[str, Tab] = {}
         self.owners: dict[str, Tab] = {}  # Any session (page or iframe) -> its tab.
         self.attached: dict[str, asyncio.Event] = {}
@@ -1317,6 +1325,27 @@ class Session:
         self.temporary = True
         self.lock_file = None
         self.output_dir = os.path.abspath(os.path.expanduser(self.config.output_dir or os.path.join(tempfile.gettempdir(), "browse-anything")))
+
+    # The calling session's view.
+
+    @property
+    def tabs(self) -> list["Tab"]:
+        """The caller's tabs, in order; the indexes the model sees."""
+        return self.tabs_of(CALLER.get())
+
+    def tabs_of(self, caller: str) -> list["Tab"]:
+        return [tab for tab in self.all_tabs if tab.caller == caller]
+
+    @property
+    def current(self) -> "Tab | None":
+        return self.currents.get(CALLER.get())
+
+    @current.setter
+    def current(self, tab: "Tab | None"):
+        if tab is None:
+            self.currents.pop(CALLER.get(), None)
+        else:
+            self.currents[CALLER.get()] = tab
 
     # Chrome.
 
@@ -1356,7 +1385,7 @@ class Session:
     def reset(self):
         for tab in self.targets.values():
             tab.closed = True
-        self.tabs, self.current, self.targets, self.owners, self.attached, self.contexts = [], None, {}, {}, {}, {}
+        self.all_tabs, self.currents, self.targets, self.owners, self.attached, self.contexts = [], {}, {}, {}, {}, {}
 
     async def allow_downloads(self, context: str | None):
         params = {"behavior": "allowAndName", "downloadPath": os.path.join(self.profile, "downloads"), "eventsEnabled": True}
@@ -1369,7 +1398,8 @@ class Session:
         elif method == "Target.detachedFromTarget":
             self.detach(params["sessionId"], session)
         elif method == "Browser.downloadWillBegin":
-            tab = next((t for t in self.targets.values() if params.get("frameId") in (t.frame, *t.frames)), self.current)
+            tab = next((t for t in self.targets.values() if params.get("frameId") in (t.frame, *t.frames)),
+                       self.currents.get(self.last_caller))
             self.downloads[params["guid"]] = params | {"tab": tab, "state": "inProgress", "done": asyncio.Event()}
             if tab:
                 tab.downloads.add(params["guid"])
@@ -1396,9 +1426,12 @@ class Session:
                     with contextlib.suppress(ProtocolError, ConnectionError):
                         await self.cdp.send("Target.closeTarget", targetId=tab.target)
                 elif opener or not self.creating:  # A popup: the model sees it in the tab list.
-                    self.tabs.append(tab)
-                    if reporter := opener or self.current:
-                        reporter.events.append(f"New tab {self.tabs.index(tab)} opened by the page (select it with browser_tabs)")
+                    # This runs for Chrome's event, outside any tool call: the popup belongs to its opener's caller.
+                    tab.caller = opener.caller if opener else self.last_caller
+                    self.all_tabs.append(tab)
+                    if reporter := opener or self.currents.get(tab.caller):
+                        reporter.events.append(f"New tab {self.tabs_of(tab.caller).index(tab)} opened by the page "
+                                               "(select it with browser_tabs)")
                 tab.ready.set()
                 self.attached.setdefault(tab.target, asyncio.Event()).set()
             elif parent and info["type"] == "iframe" and (tab := self.owners.get(parent)):
@@ -1422,11 +1455,16 @@ class Session:
             self.targets.pop(tab.target, None)
             for child in tab.parents:
                 self.owners.pop(child, None)
-            if tab in self.tabs:
-                index = self.tabs.index(tab)
-                self.tabs.remove(tab)
-                if self.current is tab:
-                    self.current = self.tabs[min(index, len(self.tabs) - 1)] if self.tabs else None
+            if tab in self.all_tabs:
+                own = self.tabs_of(tab.caller)
+                index = own.index(tab)
+                self.all_tabs.remove(tab)
+                own.remove(tab)
+                if self.currents.get(tab.caller) is tab:
+                    if own:
+                        self.currents[tab.caller] = own[min(index, len(own) - 1)]
+                    else:
+                        del self.currents[tab.caller]
         else:
             tab.frames = {frame: child for frame, child in tab.frames.items() if child != session}
             tab.parents.pop(session, None)
@@ -1459,7 +1497,8 @@ class Session:
             # Chrome's window size includes room for its toolbars; size the window so the viewport is as configured.
             with contextlib.suppress(ProtocolError, TimeoutError):
                 await tab.resize(self.config.width, self.config.height)
-            self.tabs.append(tab)
+            tab.caller = CALLER.get()
+            self.all_tabs.append(tab)
             if select:
                 await self.select(tab)
         return tab
@@ -1483,24 +1522,27 @@ class Session:
             await self.cdp.send("Target.closeTarget", targetId=tab.target)
         self.detach(tab.id, None)
 
-    async def expire_idle(self) -> int:
-        """Close the tabs no tool has used for `tab_idle_minutes`; returns how many."""
+    async def expire_idle(self) -> list["Tab"]:
+        """Close the tabs, of any caller, no tool has used for `tab_idle_minutes`; returns them."""
         limit = self.config.tab_idle_minutes * 60
         if not limit or not self.cdp or not self.cdp.alive:
-            return 0
-        stale = [tab for tab in self.tabs if time.monotonic() - tab.used > limit and not tab.lock.locked()]
+            return []
+        stale = [tab for tab in self.all_tabs if time.monotonic() - tab.used > limit and not tab.lock.locked()]
         for tab in stale:
             await self.close_tab(tab)
-        if not self.tabs:
+        if not self.all_tabs:
             for context in list(self.contexts.values()):
                 with contextlib.suppress(ProtocolError, ConnectionError):
                     await self.cdp.send("Target.disposeBrowserContext", browserContextId=context)
             self.contexts = {}
-        return len(stale)
+        return stale
 
     async def close_all(self):
+        """Close the caller's tabs; other callers' tabs stay open."""
         for tab in list(self.tabs):
             await self.close_tab(tab)
+        if self.all_tabs:
+            return
         for context in list(self.contexts.values()):
             with contextlib.suppress(ProtocolError, ConnectionError):
                 await self.cdp.send("Target.disposeBrowserContext", browserContextId=context)
