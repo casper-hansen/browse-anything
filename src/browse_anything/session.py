@@ -69,6 +69,25 @@ TURNSTILE_STATE = """(() => {
     return !fields.length ? 'none' : fields.every(f => f.value) ? 'passed' : 'pending';
 })()"""
 
+# Resolves once the DOM has not changed for IDLE ms and no finite animation runs, or after LIMIT ms.
+SETTLE_DOM = """new Promise(resolve => {
+    const start = performance.now();
+    let last = start;
+    const observer = new MutationObserver(() => { last = performance.now(); });
+    observer.observe(document, {subtree: true, childList: true, attributes: true, characterData: true});
+    const animating = () => document.getAnimations().some(a => {
+        if (a.playState !== 'running') return false;
+        const end = a.effect && a.effect.getComputedTiming ? a.effect.getComputedTiming().endTime : Infinity;
+        return Number.isFinite(end);
+    });
+    const tick = () => {
+        const now = performance.now();
+        if ((now - last >= IDLE && !animating()) || now - start >= LIMIT) { observer.disconnect(); resolve(now - start); }
+        else setTimeout(tick, 50);
+    };
+    setTimeout(tick, 50);
+})"""
+
 POLL = 0.25  # Seconds between checks of a challenge's progress.
 RECLICK = 4  # Seconds to let a click verify before clicking a checkbox that is still shown.
 CHALLENGE_TIMEOUT = 45
@@ -628,9 +647,18 @@ class Tab:
         if self.navigations != navigations:
             await self.settle_navigation(lazy=False)
         else:
-            await self.quiet(limit)
+            # The network going quiet and the page's DOM settling are waited for together.
+            await asyncio.gather(self.quiet(limit), self.settle_dom())
         if len(self.downloads) > downloads:
             await self.browser.finish_downloads(self)
+
+    async def settle_dom(self, idle: float = 0.4, limit: float = 1.5):
+        """Wait until the page stops changing: no DOM mutations for `idle` seconds and no finite CSS animation or
+        transition running, for at most `limit` seconds. A cookie banner that fades out after its "Reject all" is
+        clicked is otherwise still in the snapshot, and the click looks like it failed."""
+        with contextlib.suppress(ProtocolError, TimeoutError, ConnectionError):
+            await self.eval(SETTLE_DOM.replace("IDLE", str(int(idle * 1000))).replace("LIMIT", str(int(limit * 1000))),
+                            isolated=True, timeout=limit + 2)
 
     async def act(self, coroutine):
         """Run an action; return early (leaving it running) if it opens a dialog or file chooser."""
