@@ -4,7 +4,7 @@ import os
 import signal
 
 import anyio
-from markdownify import markdownify
+from .markdown import to_markdown
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 from mcp_types import CallToolResult, ListToolsResult
@@ -60,7 +60,7 @@ async def fetch(url: str, html: bool, render: bool | None):
     browser = Browser(Session(config_from_env()))
     try:
         page = await browser.get(url, render)
-        print(page.html if html else markdownify(page.html, heading_style="ATX"))
+        print(page.html if html else to_markdown(page.html))
     finally:
         browser.session.close()
 

@@ -362,3 +362,10 @@ def test_brand_list_matches_chrome():
     assert header(131) == '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"'
     assert header(157) == '"Not-A.Brand";v="99", "Google Chrome";v="157", "Chromium";v="157"'
     assert brands(157, "157.0.8103.15")[0]["version"] == "99.0.0.0"
+
+
+def test_markdown_keeps_links_without_text():
+    from browse_anything.markdown import to_markdown
+    assert to_markdown('<a href="/ad/2" aria-label="Voir l’annonce"></a><h3>Title</h3>').startswith("[Voir l’annonce](/ad/2)")
+    assert to_markdown('<a href="/ad/3"></a>') == "[link](/ad/3)"
+    assert to_markdown('<a href="#top"></a><a href="/p">Normal</a>') == "[Normal](/p)"

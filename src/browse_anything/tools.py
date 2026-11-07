@@ -15,7 +15,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
-from markdownify import markdownify
+from .markdown import to_markdown
 from mcp_types import ImageContent, TextContent, Tool, ToolAnnotations
 
 from .browser import Browser
@@ -303,7 +303,7 @@ class Tools:
     async def browse(self, args):
         page = await self.browser.get(args["url"])
         html = page.html
-        text = html if args.get("format") == "html" else markdownify(html, heading_style="ATX")
+        text = html if args.get("format") == "html" else to_markdown(html)
         text = re.sub(r"\n{3,}", "\n\n", text).strip()
         return Response(result=[self.fit(f"{page.status} {page.url}\n\n{text}", RESULT_MAX * 2, "browse",
                                          "html" if args.get("format") == "html" else "md")], page=False)
