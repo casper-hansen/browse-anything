@@ -82,7 +82,8 @@ SETTLE_DOM = """new Promise(resolve => {
     });
     const tick = () => {
         const now = performance.now();
-        if ((now - last >= IDLE && !animating()) || now - start >= LIMIT) { observer.disconnect(); resolve(now - start); }
+        if (animating()) last = now;  // A fade counts as change: the element is often removed when it ends.
+        if (now - last >= IDLE || now - start >= LIMIT) { observer.disconnect(); resolve(now - start); }
         else setTimeout(tick, 50);
     };
     setTimeout(tick, 50);
