@@ -369,3 +369,31 @@ def test_markdown_keeps_links_without_text():
     assert to_markdown('<a href="/ad/2" aria-label="Voir l’annonce"></a><h3>Title</h3>').startswith("[Voir l’annonce](/ad/2)")
     assert to_markdown('<a href="/ad/3"></a>') == "[link](/ad/3)"
     assert to_markdown('<a href="#top"></a><a href="/p">Normal</a>') == "[Normal](/p)"
+
+
+def test_excerpt_uses_the_main_landmark_with_the_content(tmp_path):
+    import asyncio
+    from browse_anything.browser import Browser
+    from browse_anything.session import Config, Session
+    from browse_anything.snapshot import Item
+    from browse_anything.tools import Tools
+    results = [Item("link", f"Result {i}", f"e{100 + i}", url=f"https://example.com/{i}" * 4) for i in range(120)]
+    ads = [Item("link", f"Ad {i}", f"e{300 + i}") for i in range(10)]
+
+    class FakeTab:
+        def __init__(self, items):
+            self.items = items
+
+        async def snapshot(self):
+            return self.items
+
+    async def excerpt(items):
+        session = Session(Config(output_dir=str(tmp_path)))
+        return await Tools(session, Browser(session)).snapshot_section(FakeTab(items), "action")
+
+    # Google puts an empty `main` before the one with its results.
+    text = asyncio.run(excerpt(ads + [Item("main", ref="e1"), Item("main", ref="e2", children=results)]))
+    assert "- main [ref=e2]:" in text and 'link "Result 0"' in text and "start of its main content" in text
+    # A main with next to nothing in it, on a big page: show the page's start instead.
+    text = asyncio.run(excerpt([Item("main", ref="e1", children=[Item("heading", "Hi", "e3")])] + results))
+    assert "shows its start" in text and 'link "Result 0"' in text

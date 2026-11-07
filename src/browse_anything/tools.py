@@ -24,6 +24,7 @@ from .snapshot import Item, controls, find, find_item, find_roles, render, walk_
 
 SNAPSHOT_INLINE = 9_000  # Characters of snapshot shown after an action; more is saved to a file.
 SNAPSHOT_MAX = 50_000  # Characters shown by browser_snapshot.
+MAIN_MIN = 500  # A main landmark smaller than this, on a page too big to show, is not where its content is.
 RESULT_MAX = 40_000  # Characters of other results shown; more is saved to a file.
 NEW_ERRORS, NEW_LOGS = 3, 5  # Most new page errors, and console output of the page's own code, listed under Events.
 
@@ -234,7 +235,11 @@ class Tools:
         path = self.save(text, f"page-{stamp()}.yml")
         if mode == "action":
             # The start of the main content is what a model looks for first: results, an article, a product's offers.
-            main = next((item for item in walk_items(items) if item.role == "main"), None)
+            # Some pages have more than one, such as Google's empty placeholder before its results: take the biggest.
+            mains = [(len(render([item])), item) for item in walk_items(items) if item.role == "main"]
+            size, main = max(mains, key=lambda pair: pair[0], default=(0, None))
+            if size < MAIN_MIN:  # Next to nothing in it: the content is elsewhere on the page.
+                main = None
             if main:
                 # Open dialogs, such as cookie banners, block the page; they are shown even outside the main content.
                 dialogs = [condense(d) for d in find_roles(items, {"dialog", "alertdialog"}, skip=main) if visible(d)]
