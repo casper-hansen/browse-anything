@@ -188,6 +188,9 @@ class Config:
     console: Literal["auto", "stealth", "full"] = "auto"
     width: int = 1280
     height: int = 720
+    # Tabs unused for this many minutes are closed. One server serves every agent session, which MCP does not tell
+    # apart, so this keeps a new task from starting among another's leftover tabs. 0 keeps tabs open.
+    tab_idle_minutes: float = 60
 
 
 @dataclass
@@ -277,6 +280,7 @@ class Tab:
         self.lock = asyncio.Lock()
         self.ready = asyncio.Event()
         self.closed = False
+        self.used = time.monotonic()  # When a tool last acted on this tab.
         self.url = "about:blank"
         self.status: int | None = None
         self.loading = False
@@ -1410,6 +1414,21 @@ class Session:
         with contextlib.suppress(ProtocolError, ConnectionError):
             await self.cdp.send("Target.closeTarget", targetId=tab.target)
         self.detach(tab.id, None)
+
+    async def expire_idle(self) -> int:
+        """Close the tabs no tool has used for `tab_idle_minutes`; returns how many."""
+        limit = self.config.tab_idle_minutes * 60
+        if not limit or not self.cdp or not self.cdp.alive:
+            return 0
+        stale = [tab for tab in self.tabs if time.monotonic() - tab.used > limit and not tab.lock.locked()]
+        for tab in stale:
+            await self.close_tab(tab)
+        if not self.tabs:
+            for context in list(self.contexts.values()):
+                with contextlib.suppress(ProtocolError, ConnectionError):
+                    await self.cdp.send("Target.disposeBrowserContext", browserContextId=context)
+            self.contexts = {}
+        return len(stale)
 
     async def close_all(self):
         for tab in list(self.tabs):

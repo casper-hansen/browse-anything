@@ -20,7 +20,8 @@ def config_from_env() -> Config:
     return Config(profile=os.environ.get("BROWSE_ANYTHING_PROFILE", ""),
                   output_dir=os.environ.get("BROWSE_ANYTHING_OUTPUT_DIR", ""),
                   console=console if console in ("auto", "stealth", "full") else "auto",
-                  width=int(width or 1280), height=int(height or 720))
+                  width=int(width or 1280), height=int(height or 720),
+                  tab_idle_minutes=float(os.environ.get("BROWSE_ANYTHING_TAB_IDLE_MINUTES", "60")))
 
 
 def serve(config: Config):

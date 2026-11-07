@@ -69,6 +69,7 @@ Chrome or Chromium must be installed. Playwright's Chromium (`npx playwright ins
 | `BROWSE_ANYTHING_OUTPUT_DIR` | `<tmp>/browse-anything` | Screenshots, downloads, and large output |
 | `BROWSE_ANYTHING_CONSOLE` | `auto` | `auto`, `stealth` or `full` (see above) |
 | `BROWSE_ANYTHING_VIEWPORT` | `1280x720` | Viewport of new tabs |
+| `BROWSE_ANYTHING_TAB_IDLE_MINUTES` | `60` | Close tabs no tool has used for this long; `0` keeps them. One server serves every DSH session, and MCP does not say which session a call is from, so this keeps a new task from starting among an old one's tabs |
 
 Files for `browser_file_upload` and `browser_drop` are copied into Chrome's profile first. Chrome cannot read them where they are when they are in `/tmp`, because the Linux sandbox gives Chrome its own empty `/tmp`.
 
@@ -110,6 +111,7 @@ The plugin's config can be overridden in `~/.dsh/profiles/<profile>/cordis.patch
     outputDir: ""                # screenshots, downloads, large output; default: <tmp>/browse-anything
     console: auto                # auto | stealth | full
     viewport: 1280x720
+    tabIdleMinutes: 60           # close tabs unused this long; 0 keeps them
     toolCallTimeoutMs: 120000
     syncTimeoutMs: 600000        # first `uv sync` downloads the Python dependencies
     failOnStartupError: true

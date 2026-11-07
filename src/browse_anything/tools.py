@@ -105,6 +105,7 @@ class Tools:
                                                     read_only_hint=read_only, destructive_hint=False, open_world_hint=True))
             self.specs[name] = (tool, getattr(self, handler), modal_ok)
         self.listed_tabs = ""  # The tab list as last shown.
+        self.notes: list[str] = []  # Events to report with the next response that has a page.
 
     def definitions(self) -> list[Tool]:
         return [spec[0] for spec in self.specs.values()]
@@ -119,11 +120,17 @@ class Tools:
             return [TextContent(type="text", text=f"### Error\nMissing required argument{'s' if len(missing) > 1 else ''}: "
                                                   f"{', '.join(missing)}")], True
         try:
+            if name != "browse":
+                if expired := await self.session.expire_idle():
+                    self.notes.append(f"Closed {expired} tab{'s' if expired > 1 else ''} no one had used for over "
+                                      f"{self.session.config.tab_idle_minutes:g} minutes")
             if name != "browse" and not modal_ok and self.session.current and self.session.cdp and self.session.cdp.alive:
                 tab = self.session.current
                 if tab.dialog or tab.chooser:
                     raise ToolError(f'Tool "{name}" does not handle the modal state.')
             response = await handler(args or {})
+            if response.tab and not response.tab.closed:
+                response.tab.used = time.monotonic()
             return await self.render(response), False
         except ToolError as error:
             text = f"### Error\n{error}"
@@ -191,8 +198,8 @@ class Tools:
         elif tab and not tab.closed and response.snapshot:
             sections.append(await self.snapshot_section(tab, response.snapshot))
         if tab and not tab.closed:
-            events = list(tab.events)
-            tab.events.clear()
+            events = self.notes + list(tab.events)
+            self.notes, tab.events = [], []
             if fresh := tab.new_messages():
                 events.append(self.console_events(fresh, tab))
             if events:

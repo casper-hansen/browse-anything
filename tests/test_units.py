@@ -305,3 +305,33 @@ def test_dialogs_condensed_anywhere_in_the_tree():
     text = render(condense_dialogs(page_))
     assert "(shortened" in text and 'button "Afvis" [ref=e4]' in text and 'heading "Shop"' in text
     assert len(text) < 800
+
+
+def test_idle_tabs_are_closed(monkeypatch):
+    import asyncio
+    from browse_anything.session import Config, Session
+
+    class FakeTab:
+        def __init__(self, used):
+            self.used, self.lock = used, asyncio.Lock()
+
+    async def run():
+        session = Session(Config(tab_idle_minutes=1))
+        session.cdp = type("CDP", (), {"alive": True})()
+        closed = []
+
+        async def close_tab(tab):
+            closed.append(tab)
+            session.tabs.remove(tab)
+
+        session.close_tab = close_tab
+        import time
+        old, fresh = FakeTab(time.monotonic() - 120), FakeTab(time.monotonic())
+        session.tabs = [old, fresh]
+        assert await session.expire_idle() == 1 and closed == [old] and session.tabs == [fresh]
+        session.config.tab_idle_minutes = 0
+        old.used = time.monotonic() - 10_000
+        session.tabs = [old]
+        assert await session.expire_idle() == 0
+
+    asyncio.run(run())

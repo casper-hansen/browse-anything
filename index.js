@@ -49,6 +49,8 @@ export const Config = z.object({
     .description('Console capture. `full` records console.log calls but uses Runtime.enable, which bot walls can detect; `stealth` records only page errors and browser messages; `auto` is full on local and private hosts, stealth elsewhere.'),
   viewport: z.string().pattern(/^\d+x\d+$/).default('1280x720')
     .description('Viewport size of new tabs, WIDTHxHEIGHT.'),
+  tabIdleMinutes: z.number().min(0).default(60)
+    .description('Close tabs no tool has used for this many minutes. All sessions share the browser, so this keeps a new task from starting among an old one\'s tabs. 0 keeps tabs open.'),
   toolCallTimeoutMs: z.number().min(1).default(120_000)
     .description('Timeout per tool call. Passing Cloudflare and rendering a page can take most of a minute.'),
   syncTimeoutMs: z.number().min(1).default(600_000)
@@ -78,6 +80,7 @@ export async function apply(ctx, config) {
       ...(config.outputDir ? { BROWSE_ANYTHING_OUTPUT_DIR: config.outputDir } : {}),
       BROWSE_ANYTHING_CONSOLE: config.console,
       BROWSE_ANYTHING_VIEWPORT: config.viewport,
+      BROWSE_ANYTHING_TAB_IDLE_MINUTES: String(config.tabIdleMinutes),
     },
     toolCallTimeoutMs: config.toolCallTimeoutMs,
     failOnStartupError: config.failOnStartupError,
