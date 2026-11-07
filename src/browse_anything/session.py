@@ -1096,7 +1096,10 @@ class Tab:
         with contextlib.suppress(ProtocolError, TimeoutError, ConnectionError):
             info = (await self.cdp.send("Target.getTargetInfo", targetId=self.target, timeout=5))["targetInfo"]
             self.url = info.get("url") or self.url
-            return info.get("title", "")
+            title = info.get("title", "")
+            # Chrome titles an untitled page with its URL; the page's own title is empty.
+            bare = re.sub(r"^[a-z][a-z0-9+.-]*://", "", self.url)
+            return "" if title and title in (self.url, bare, bare.removeprefix("www.")) else title
         return ""
 
     # Other page operations.
